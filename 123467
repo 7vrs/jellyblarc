@@ -1,0 +1,2879 @@
+local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local ContextActionService = game:GetService("ContextActionService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
+local Lighting = game:GetService("Lighting")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
+
+local THEME = {
+	Id = "Pink",
+	Top = Color3.fromRGB(249, 196, 218),
+	Mid = Color3.fromRGB(243, 176, 205),
+	Bottom = Color3.fromRGB(236, 158, 192),
+	StrokeMid = Color3.fromRGB(252, 214, 230),
+	Accent = Color3.fromRGB(222, 124, 166),
+	TrackOff = Color3.fromRGB(232, 150, 186),
+	SectionText = Color3.fromRGB(254, 243, 248),
+}
+
+local CLEANUP_KEY = "JellyBlarc" .. THEME.Id .. "Cleanup"
+
+if getgenv and getgenv()[CLEANUP_KEY] then
+	pcall(getgenv()[CLEANUP_KEY])
+end
+
+local WHITE = Color3.fromRGB(255, 255, 255)
+
+local function New(class, props, parent)
+	local inst = Instance.new(class)
+	for k, v in pairs(props) do
+		inst[k] = v
+	end
+	inst.Parent = parent
+	return inst
+end
+
+local function Corner(parent, radius)
+	return New("UICorner", { CornerRadius = radius }, parent)
+end
+
+local function IsPress(input)
+	return input.UserInputType == Enum.UserInputType.MouseButton1
+		or input.UserInputType == Enum.UserInputType.Touch
+end
+
+local Connections = {}
+local Cleanups = {}
+
+local function Conn(c)
+	table.insert(Connections, c)
+	return c
+end
+
+local function OnCleanup(fn)
+	table.insert(Cleanups, fn)
+end
+
+------------------------------------------------------------------
+-- window
+------------------------------------------------------------------
+local Gui = New("ScreenGui", {
+	Name = "JellyBlarc" .. THEME.Id,
+	ResetOnSpawn = false,
+	IgnoreGuiInset = true,
+	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+	DisplayOrder = 50,
+})
+
+pcall(function()
+	if syn and syn.protect_gui then
+		syn.protect_gui(Gui)
+	end
+end)
+
+Gui.Parent = (gethui and gethui()) or CoreGui
+
+local IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+local Viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+
+local WIDTH = IsMobile and math.min(360, math.floor(Viewport.X - 60)) or 360
+local HEIGHT = IsMobile and math.min(500, math.floor(Viewport.Y * 0.85)) or 500
+local MIN_W = IsMobile and 260 or 320
+local MIN_H = IsMobile and 240 or 400
+local MAX_W, MAX_H = 800, 900
+
+local Main = New("Frame", {
+	Name = "Main",
+	Size = UDim2.fromOffset(WIDTH, HEIGHT),
+	AnchorPoint = Vector2.new(0.5, 0.5),
+	Position = UDim2.new(0.5, 0, 0.5, 0),
+	BackgroundColor3 = WHITE,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, Gui)
+
+Corner(Main, UDim.new(0, 20))
+
+New("UIGradient", {
+	Rotation = 115,
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, THEME.Top),
+		ColorSequenceKeypoint.new(0.5, THEME.Mid),
+		ColorSequenceKeypoint.new(1, THEME.Bottom),
+	}),
+}, Main)
+
+local MainStroke = New("UIStroke", {
+	Color = WHITE,
+	Thickness = 1.5,
+	Transparency = 0.25,
+}, Main)
+
+local StrokeGradient = New("UIGradient", {
+	Color = ColorSequence.new({
+		ColorSequenceKeypoint.new(0, WHITE),
+		ColorSequenceKeypoint.new(0.5, THEME.StrokeMid),
+		ColorSequenceKeypoint.new(1, WHITE),
+	}),
+}, MainStroke)
+
+local Glow = New("Frame", {
+	Size = UDim2.new(1, 60, 0, 140),
+	Position = UDim2.new(0.5, 0, 0, -78),
+	AnchorPoint = Vector2.new(0.5, 0),
+	BackgroundColor3 = WHITE,
+	BackgroundTransparency = 0.82,
+	BorderSizePixel = 0,
+	ZIndex = 0,
+}, Main)
+
+Corner(Glow, UDim.new(1, 0))
+
+------------------------------------------------------------------
+-- snow (behind everything)
+------------------------------------------------------------------
+local SnowLayer = New("Frame", {
+	Name = "Snow",
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ZIndex = 0,
+}, Main)
+
+local Flakes = {}
+
+for i = 1, 85 do
+	local f = New("Frame", {
+		BorderSizePixel = 0,
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.15 + math.random() * 0.5,
+		Size = UDim2.fromOffset(3, 3),
+		ZIndex = 0,
+	}, SnowLayer)
+
+	Corner(f, UDim.new(1, 0))
+
+	local px = math.random(2, 4)
+	f.Size = UDim2.fromOffset(px, px)
+
+	Flakes[i] = {
+		f = f,
+		x = math.random(),
+		y = math.random() * HEIGHT,
+		vy = 25 + math.random() * 45,
+		ph = math.random() * 6.28,
+		fq = 0.5 + math.random() * 1.5,
+		am = 4 + math.random() * 10,
+	}
+end
+
+------------------------------------------------------------------
+-- header
+------------------------------------------------------------------
+local Header = New("Frame", {
+	Size = UDim2.new(1, 0, 0, 108),
+	BackgroundTransparency = 1,
+	Active = true,
+}, Main)
+
+local Emblem = New("Frame", {
+	Size = UDim2.fromOffset(42, 42),
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 18),
+	BackgroundColor3 = WHITE,
+	BackgroundTransparency = 0.12,
+}, Header)
+
+Corner(Emblem, UDim.new(0, 14))
+
+New("TextLabel", {
+	Size = UDim2.new(1, 0, 1, 0),
+	BackgroundTransparency = 1,
+	Text = "J",
+	TextColor3 = THEME.Accent,
+	Font = Enum.Font.GothamBlack,
+	TextSize = 20,
+}, Emblem)
+
+New("TextLabel", {
+	Size = UDim2.new(1, 0, 0, 24),
+	Position = UDim2.new(0, 0, 0, 68),
+	BackgroundTransparency = 1,
+	Text = "JELLY BLARC",
+	TextColor3 = WHITE,
+	Font = Enum.Font.GothamBold,
+	TextSize = 18,
+}, Header)
+
+local Divider = New("Frame", {
+	Size = UDim2.new(1, -60, 0, 1),
+	Position = UDim2.new(0.5, 0, 0, 108),
+	AnchorPoint = Vector2.new(0.5, 0),
+	BackgroundColor3 = WHITE,
+	BorderSizePixel = 0,
+}, Main)
+
+New("UIGradient", {
+	Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 1),
+		NumberSequenceKeypoint.new(0.5, 0.35),
+		NumberSequenceKeypoint.new(1, 1),
+	}),
+}, Divider)
+
+local Rail = New("ScrollingFrame", {
+	Size = UDim2.new(0, 52, 1, -134),
+	Position = UDim2.new(0, 14, 0, 120),
+	BackgroundColor3 = WHITE,
+	BackgroundTransparency = 0.82,
+	BorderSizePixel = 0,
+	ScrollBarThickness = 0,
+	CanvasSize = UDim2.new(),
+	AutomaticCanvasSize = Enum.AutomaticSize.Y,
+	ScrollingDirection = Enum.ScrollingDirection.Y,
+}, Main)
+
+Corner(Rail, UDim.new(0, 16))
+
+New("UIListLayout", {
+	Padding = UDim.new(0, 10),
+	HorizontalAlignment = Enum.HorizontalAlignment.Center,
+	SortOrder = Enum.SortOrder.LayoutOrder,
+}, Rail)
+
+New("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, Rail)
+
+local Card = New("Frame", {
+	Size = UDim2.new(1, -96, 1, -134),
+	Position = UDim2.new(0, 78, 0, 120),
+	BackgroundTransparency = 1,
+	BorderSizePixel = 0,
+	ClipsDescendants = true,
+}, Main)
+
+local Grip = New("TextButton", {
+	Size = UDim2.fromOffset(28, 28),
+	AnchorPoint = Vector2.new(1, 1),
+	Position = UDim2.new(1, -2, 1, -2),
+	BackgroundTransparency = 1,
+	Text = "",
+	AutoButtonColor = false,
+	ZIndex = 10,
+}, Main)
+
+for _, p in ipairs({ { 8, 8 }, { 14, 8 }, { 8, 14 }, { 20, 8 }, { 14, 14 }, { 8, 20 } }) do
+	local dot = New("Frame", {
+		AnchorPoint = Vector2.new(1, 1),
+		Position = UDim2.new(1, -p[1], 1, -p[2]),
+		Size = UDim2.fromOffset(3, 3),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.25,
+		BorderSizePixel = 0,
+		ZIndex = 11,
+	}, Grip)
+	Corner(dot, UDim.new(1, 0))
+end
+
+local ActiveSlider = nil
+local Tabs = {}
+local Selected = nil
+
+local function SelectTab(tab)
+	Selected = tab
+
+	for _, t in ipairs(Tabs) do
+		local on = t == tab
+		t.Page.Visible = on
+
+		TweenService:Create(t.Dot, TweenInfo.new(0.15), {
+			BackgroundTransparency = on and 0 or 0.8,
+		}):Play()
+
+		t.Letter.TextColor3 = on and THEME.Accent or WHITE
+	end
+end
+
+local Window = {}
+
+function Window:AddTab(name)
+	local Dot = New("TextButton", {
+		Size = UDim2.fromOffset(32, 32),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.8,
+		Text = "",
+		AutoButtonColor = false,
+		LayoutOrder = #Tabs + 1,
+	}, Rail)
+
+	Corner(Dot, UDim.new(1, 0))
+
+	local Letter = New("TextLabel", {
+		Size = UDim2.new(1, 0, 1, 0),
+		BackgroundTransparency = 1,
+		Text = string.upper(string.sub(name, 1, 1)),
+		TextColor3 = WHITE,
+		Font = Enum.Font.GothamBold,
+		TextSize = 13,
+	}, Dot)
+
+	local Page = New("ScrollingFrame", {
+		Size = UDim2.new(1, -4, 1, -4),
+		Position = UDim2.fromOffset(2, 2),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = WHITE,
+		CanvasSize = UDim2.new(),
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		ScrollingDirection = Enum.ScrollingDirection.Y,
+		Visible = false,
+	}, Card)
+
+	New("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, Page)
+
+	New("UIPadding", {
+		PaddingLeft = UDim.new(0, 2),
+		PaddingRight = UDim.new(0, 8),
+		PaddingTop = UDim.new(0, 2),
+		PaddingBottom = UDim.new(0, 18),
+	}, Page)
+
+	local Tab = { Dot = Dot, Letter = Letter, Page = Page, Order = 0 }
+
+	table.insert(Tabs, Tab)
+
+	Conn(Dot.MouseButton1Click:Connect(function()
+		SelectTab(Tab)
+	end))
+
+	if #Tabs == 1 then
+		SelectTab(Tab)
+	end
+
+	local function Next()
+		Tab.Order += 1
+		return Tab.Order
+	end
+
+	local function RowFrame(height)
+		local Row = New("Frame", {
+			Size = UDim2.new(1, 0, 0, height),
+			BackgroundColor3 = WHITE,
+			BackgroundTransparency = 0.78,
+			BorderSizePixel = 0,
+			LayoutOrder = Next(),
+		}, Page)
+
+		Corner(Row, UDim.new(0, 10))
+
+		return Row
+	end
+
+	function Tab:AddSection(text)
+		New("TextLabel", {
+			Size = UDim2.new(1, 0, 0, 16),
+			BackgroundTransparency = 1,
+			Text = string.upper(text),
+			TextColor3 = THEME.SectionText,
+			Font = Enum.Font.GothamBold,
+			TextSize = 10,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			LayoutOrder = Next(),
+		}, Page)
+	end
+
+	function Tab:AddSpacer(height)
+		New("Frame", {
+			Size = UDim2.new(1, 0, 0, height),
+			BackgroundTransparency = 1,
+			BorderSizePixel = 0,
+			LayoutOrder = Next(),
+		}, Page)
+	end
+
+	function Tab:AddToggle(text, default, callback, note)
+		local State = default and true or false
+		local Row = RowFrame(40)
+
+		local Label = text
+		if note then
+			Label = text .. '  <font size="9" color="rgb(200,200,210)">' .. note .. "</font>"
+		end
+
+		New("TextLabel", {
+			Size = UDim2.new(1, -66, 1, 0),
+			Position = UDim2.fromOffset(12, 0),
+			BackgroundTransparency = 1,
+			Text = Label,
+			RichText = true,
+			TextColor3 = WHITE,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 13,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, Row)
+
+		local Switch = New("TextButton", {
+			Size = UDim2.fromOffset(38, 20),
+			Position = UDim2.new(1, -50, 0.5, -10),
+			BackgroundColor3 = THEME.TrackOff,
+			Text = "",
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+		}, Row)
+
+		Corner(Switch, UDim.new(1, 0))
+
+		local Knob = New("Frame", {
+			Size = UDim2.fromOffset(14, 14),
+			BackgroundColor3 = WHITE,
+			BorderSizePixel = 0,
+		}, Switch)
+
+		Corner(Knob, UDim.new(1, 0))
+
+		local function Render(animate)
+			local info = TweenInfo.new(animate and 0.15 or 0, Enum.EasingStyle.Quad)
+
+			TweenService:Create(Switch, info, { BackgroundColor3 = State and WHITE or THEME.TrackOff }):Play()
+			TweenService:Create(Knob, info, {
+				Position = State and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7),
+				BackgroundColor3 = State and THEME.Accent or WHITE,
+			}):Play()
+		end
+
+		Render(false)
+
+		Conn(Switch.MouseButton1Click:Connect(function()
+			State = not State
+			Render(true)
+
+			if callback then
+				task.spawn(callback, State)
+			end
+		end))
+
+		local Control = {}
+
+		function Control:Get()
+			return State
+		end
+
+		function Control:Set(value)
+			State = value and true or false
+			Render(true)
+
+			if callback then
+				task.spawn(callback, State)
+			end
+		end
+
+		if callback and State then
+			task.defer(callback, State)
+		end
+
+		return Control
+	end
+
+	function Tab:AddSlider(text, min, max, step, default, callback)
+		local Value = math.clamp(default or min, min, max)
+		local Row = RowFrame(52)
+
+		New("TextLabel", {
+			Size = UDim2.new(1, -78, 0, 16),
+			Position = UDim2.fromOffset(12, 7),
+			BackgroundTransparency = 1,
+			Text = text,
+			TextColor3 = WHITE,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 12,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		}, Row)
+
+		local ValueText = New("TextLabel", {
+			Size = UDim2.fromOffset(54, 16),
+			Position = UDim2.new(1, -66, 0, 7),
+			BackgroundTransparency = 1,
+			Text = "",
+			TextColor3 = WHITE,
+			Font = Enum.Font.GothamBold,
+			TextSize = 11,
+			TextXAlignment = Enum.TextXAlignment.Right,
+		}, Row)
+
+		local Track = New("Frame", {
+			Size = UDim2.new(1, -24, 0, 6),
+			Position = UDim2.new(0, 12, 0, 33),
+			BackgroundColor3 = THEME.TrackOff,
+			BorderSizePixel = 0,
+		}, Row)
+
+		Corner(Track, UDim.new(1, 0))
+
+		local Fill = New("Frame", {
+			Size = UDim2.new(0, 0, 1, 0),
+			BackgroundColor3 = WHITE,
+			BorderSizePixel = 0,
+		}, Track)
+
+		Corner(Fill, UDim.new(1, 0))
+
+		local Thumb = New("Frame", {
+			Size = UDim2.fromOffset(14, 14),
+			AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = WHITE,
+			BorderSizePixel = 0,
+		}, Track)
+
+		Corner(Thumb, UDim.new(1, 0))
+		New("UIStroke", { Color = THEME.Accent, Thickness = 2 }, Thumb)
+
+		local Hit = New("TextButton", {
+			Size = UDim2.new(1, -24, 0, 24),
+			Position = UDim2.new(0, 12, 0, 24),
+			BackgroundTransparency = 1,
+			Text = "",
+			ZIndex = 2,
+		}, Row)
+
+		local Decimals = step < 0.1 and 2 or (step < 1 and 1 or 0)
+
+		local function Show()
+			local alpha = (Value - min) / (max - min)
+
+			Fill.Size = UDim2.new(alpha, 0, 1, 0)
+			Thumb.Position = UDim2.new(alpha, 0, 0.5, 0)
+			ValueText.Text = string.format("%." .. Decimals .. "f", Value)
+		end
+
+		local function SetFromX(x)
+			local alpha = math.clamp((x - Track.AbsolutePosition.X) / math.max(Track.AbsoluteSize.X, 1), 0, 1)
+			local steps = math.floor((min + (max - min) * alpha - min) / step + 0.5)
+			local v = math.clamp(min + steps * step, min, max)
+
+			v = math.floor(v * 1000 + 0.5) / 1000
+
+			if v ~= Value then
+				Value = v
+				Show()
+
+				if callback then
+					task.spawn(callback, Value)
+				end
+			end
+		end
+
+		Conn(Hit.InputBegan:Connect(function(input)
+			if IsPress(input) then
+				ActiveSlider = SetFromX
+				SetFromX(input.Position.X)
+			end
+		end))
+
+		Show()
+
+		local Control = {}
+
+		function Control:Get()
+			return Value
+		end
+
+		return Control
+	end
+
+	function Tab:AddButton(text, callback)
+		local Button = New("TextButton", {
+			Size = UDim2.new(1, 0, 0, 38),
+			BackgroundColor3 = WHITE,
+			Text = text,
+			TextColor3 = THEME.Accent,
+			Font = Enum.Font.GothamBold,
+			TextSize = 13,
+			AutoButtonColor = false,
+			BorderSizePixel = 0,
+			LayoutOrder = Next(),
+		}, Page)
+
+		Corner(Button, UDim.new(0, 10))
+
+		Conn(Button.MouseEnter:Connect(function()
+			TweenService:Create(Button, TweenInfo.new(0.12), { BackgroundTransparency = 0.12 }):Play()
+		end))
+
+		Conn(Button.MouseLeave:Connect(function()
+			TweenService:Create(Button, TweenInfo.new(0.12), { BackgroundTransparency = 0 }):Play()
+		end))
+
+		Conn(Button.MouseButton1Click:Connect(function()
+			if callback then
+				task.spawn(callback)
+			end
+		end))
+
+		return Button
+	end
+
+	return Tab
+end
+
+Conn(UserInputService.InputChanged:Connect(function(input)
+	if ActiveSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		ActiveSlider(input.Position.X)
+	end
+end))
+
+Conn(UserInputService.InputEnded:Connect(function(input)
+	if IsPress(input) then
+		ActiveSlider = nil
+	end
+end))
+
+do
+	local Dragging, DragStart, StartPos = false, nil, nil
+
+	Conn(Header.InputBegan:Connect(function(input)
+		if IsPress(input) then
+			Dragging, DragStart, StartPos = true, input.Position, Main.Position
+		end
+	end))
+
+	Conn(UserInputService.InputChanged:Connect(function(input)
+		if Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = input.Position - DragStart
+
+			Main.Position = UDim2.new(
+				StartPos.X.Scale, StartPos.X.Offset + d.X,
+				StartPos.Y.Scale, StartPos.Y.Offset + d.Y
+			)
+		end
+	end))
+
+	Conn(UserInputService.InputEnded:Connect(function(input)
+		if IsPress(input) then
+			Dragging = false
+		end
+	end))
+end
+
+do
+	local Resizing, StartMouse, StartSize = false, nil, nil
+
+	Conn(Grip.InputBegan:Connect(function(input)
+		if IsPress(input) then
+			Resizing, StartMouse, StartSize = true, input.Position, Main.AbsoluteSize
+		end
+	end))
+
+	Conn(UserInputService.InputChanged:Connect(function(input)
+		if Resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+			local d = input.Position - StartMouse
+
+			Main.Size = UDim2.fromOffset(
+				math.clamp(StartSize.X + d.X, MIN_W, MAX_W),
+				math.clamp(StartSize.Y + d.Y, MIN_H, MAX_H)
+			)
+		end
+	end))
+
+	Conn(UserInputService.InputEnded:Connect(function(input)
+		if IsPress(input) then
+			Resizing = false
+		end
+	end))
+end
+
+Conn(UserInputService.InputBegan:Connect(function(input, processed)
+	if not processed and input.KeyCode == Enum.KeyCode.RightControl then
+		Main.Visible = not Main.Visible
+	end
+end))
+
+------------------------------------------------------------------
+-- animation loop (snow, border spin, emblem pulse)
+------------------------------------------------------------------
+local AnimClock = 0
+local BorderAngle = 0
+
+Conn(RunService.Heartbeat:Connect(function(dt)
+	AnimClock += dt
+
+	BorderAngle = (BorderAngle + 60 * dt) % 360
+	StrokeGradient.Rotation = BorderAngle
+
+	local es = 46 + 4 * (0.5 - 0.5 * math.cos(AnimClock * 2 * math.pi / 4.4))
+	Emblem.Size = UDim2.fromOffset(es, es)
+
+	local H = Main.AbsoluteSize.Y
+
+	for _, fl in ipairs(Flakes) do
+		fl.y += fl.vy * 0.7 * dt
+
+		if fl.y > H + 6 then
+			fl.y = -6
+			fl.x = math.random()
+		end
+
+		fl.f.Position = UDim2.new(fl.x, math.sin(AnimClock * fl.fq + fl.ph) * fl.am, 0, fl.y)
+	end
+end))
+
+------------------------------------------------------------------
+-- game modules
+------------------------------------------------------------------
+local Modules = {}
+
+local function LoadModules()
+	if Modules.Weave and Modules.AttackState and Modules.Combat then
+		return true
+	end
+
+	local Ok, Err = pcall(function()
+		local Client = ReplicatedStorage:WaitForChild("Client", 10)
+		local Shared = ReplicatedStorage:WaitForChild("Shared", 10)
+
+		Modules.Weave = require(Client.Combat.Weave)
+		Modules.AttackState = require(Client.Combat.AttackState)
+		Modules.Remotes = require(Shared.Net.Remotes)
+		Modules.Movers = require(Shared.Util.Movers)
+		Modules.Combat = Modules.Remotes.Client("CombatService")
+	end)
+
+	if not Ok then
+		warn("[Jelly Blarc] could not load the game's modules: " .. tostring(Err))
+	end
+
+	if not Modules.Input then
+		pcall(function()
+			local Client = ReplicatedStorage:WaitForChild("Client", 10)
+			Modules.Input = require(Client.Controllers.InputController)
+		end)
+	end
+
+	return Modules.Weave ~= nil and Modules.AttackState ~= nil and Modules.Combat ~= nil
+end
+
+task.spawn(LoadModules)
+
+local LastLoadTry = 0
+
+local function EnsureModules()
+	if Modules.AttackState and Modules.Combat then
+		return true
+	end
+
+	local Now = os.clock()
+
+	if Now - LastLoadTry > 2 then
+		LastLoadTry = Now
+		task.spawn(LoadModules)
+	end
+
+	return false
+end
+
+local function HasFight()
+	local Character = LocalPlayer.Character
+	return Character ~= nil and Character:FindFirstChild("Fight") ~= nil
+end
+
+local function IsAlive()
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+	return Humanoid ~= nil and Humanoid.Health > 0
+end
+
+local HAND_PARTS = { "RightHand", "LeftHand", "Right Arm", "Left Arm" }
+local FOOT_PARTS = { "RightFoot", "LeftFoot", "Right Leg", "Left Leg" }
+
+local function ClosestLimb(Character, Names, Position)
+	local Best = nil
+	local BestDistance = math.huge
+
+	for _, Name in ipairs(Names) do
+		local Part = Character:FindFirstChild(Name)
+
+		if Part and Part:IsA("BasePart") then
+			local Distance = (Part.Position - Position).Magnitude
+
+			if Distance < BestDistance then
+				BestDistance = Distance
+				Best = Part
+			end
+		end
+	end
+
+	return Best or Character:FindFirstChild("HumanoidRootPart")
+end
+
+local function NearestTarget(Range)
+	local Character = LocalPlayer.Character
+	local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+	if not Root then
+		return nil
+	end
+
+	local Best = nil
+	local BestDistance = Range
+	local Seen = {}
+
+	local function Check(Model)
+		if not Model or Model == Character or Seen[Model] or not Model:IsA("Model") then
+			return
+		end
+
+		Seen[Model] = true
+
+		local TargetRoot = Model:FindFirstChild("HumanoidRootPart")
+		local Humanoid = Model:FindFirstChildOfClass("Humanoid")
+
+		if not TargetRoot or not Humanoid or Humanoid.Health <= 0 then
+			return
+		end
+
+		local Distance = (TargetRoot.Position - Root.Position).Magnitude
+
+		if Distance <= BestDistance then
+			BestDistance = Distance
+			Best = Model
+		end
+	end
+
+	for _, Player in ipairs(Players:GetPlayers()) do
+		if Player ~= LocalPlayer then
+			Check(Player.Character)
+		end
+	end
+
+	local Live = workspace:FindFirstChild("Live")
+
+	if Live then
+		for _, Child in ipairs(Live:GetChildren()) do
+			Check(Child)
+		end
+	end
+
+	return Best
+end
+
+------------------------------------------------------------------
+-- EXPANDERS: auto connect + hitbox
+------------------------------------------------------------------
+local ConnectOn = false
+local ConnectRange = 8
+
+local function ReportHit(Action, Kind)
+	local Active = Modules.AttackState and Modules.AttackState.Active
+	local Combat = Modules.Combat
+	local Character = LocalPlayer.Character
+
+	if not ConnectOn or not Active or not Combat or not Character or not IsAlive() then
+		return
+	end
+
+	local Current = Kind == "Stomp" and Active.CurrentAction or Active.CurrentM1
+
+	if Current ~= Action then
+		return
+	end
+
+	local Model = NearestTarget(ConnectRange)
+
+	if not Model then
+		return
+	end
+
+	local TargetPart = Model:FindFirstChild("UpperTorso")
+		or Model:FindFirstChild("Torso")
+		or Model:FindFirstChild("HumanoidRootPart")
+
+	if not TargetPart then
+		return
+	end
+
+	local Limb = ClosestLimb(Character, Kind == "Stomp" and FOOT_PARTS or HAND_PARTS, TargetPart.Position)
+	local Seq = Active.Seq
+
+	if type(Seq) ~= "number" or not Limb then
+		return
+	end
+
+	pcall(function()
+		Combat.HitReport:Fire(Seq, TargetPart, Limb.Position)
+	end)
+end
+
+local ActionTokens = { Attack = 0, Stomp = 0 }
+
+local function OnAction(Action, Kind)
+	ActionTokens[Kind] += 1
+
+	local Mine = ActionTokens[Kind]
+	local Fired = false
+	local Marker = nil
+
+	local function Fire()
+		if Fired or Mine ~= ActionTokens[Kind] then
+			return
+		end
+
+		Fired = true
+
+		if Marker then
+			Marker:Disconnect()
+			Marker = nil
+		end
+
+		task.spawn(ReportHit, Action, Kind)
+	end
+
+	pcall(function()
+		Marker = Action:GetMarkerReachedSignal("Start"):Connect(Fire)
+	end)
+
+	task.delay(0.1, Fire)
+end
+
+local LastM1 = nil
+local LastM1Time = 0
+
+Conn(RunService.Heartbeat:Connect(function()
+	if not ConnectOn then
+		LastM1 = nil
+		return
+	end
+
+	if not EnsureModules() then
+		return
+	end
+
+	local Active = Modules.AttackState.Active
+	local M1 = Active and Active.CurrentM1
+
+	if not M1 then
+		LastM1 = nil
+		return
+	end
+
+	local Playing = false
+	local TimePos = 0
+
+	pcall(function()
+		Playing = M1.IsPlaying
+		TimePos = M1.TimePosition
+	end)
+
+	local Restarted = Playing and M1 == LastM1 and TimePos + 0.02 < LastM1Time
+	LastM1Time = TimePos
+
+	if Playing and (M1 ~= LastM1 or Restarted) then
+		LastM1 = M1
+		OnAction(M1, "Attack")
+	elseif not Playing then
+		LastM1 = nil
+	end
+end))
+
+local function SetAutoConnect(State)
+	ConnectOn = State
+	LastM1 = nil
+
+	if State then
+		task.spawn(LoadModules)
+	end
+end
+
+-- hitbox
+local HitboxOn = false
+local HITBOX_RANGE = 7
+local HITBOX_TRANSPARENCY = 0.7
+local HitboxTracked = {}
+local HitboxLastSync = 0
+
+local function RestoreHitbox(Root)
+	local Data = HitboxTracked[Root]
+
+	if not Data then
+		return
+	end
+
+	HitboxTracked[Root] = nil
+
+	for _, C in ipairs(Data.Conns) do
+		C:Disconnect()
+	end
+
+	if Root.Parent then
+		pcall(function()
+			Root.Size = Data.Size
+			Root.Transparency = Data.Transparency
+			Root.Color = Data.Color
+			Root.Material = Data.Material
+			Root.CanCollide = Data.CanCollide
+		end)
+	end
+end
+
+local function ShapeHitbox(Root)
+	local Target = Vector3.new(HITBOX_RANGE, HITBOX_RANGE, HITBOX_RANGE)
+
+	if Root.Size ~= Target then
+		Root.Size = Target
+	end
+
+	Root.Transparency = HITBOX_TRANSPARENCY
+	Root.CanCollide = false
+end
+
+local function TrackHitbox(Root)
+	if HitboxTracked[Root] then
+		return
+	end
+
+	local Data = {
+		Size = Root.Size,
+		Transparency = Root.Transparency,
+		Color = Root.Color,
+		Material = Root.Material,
+		CanCollide = Root.CanCollide,
+		Conns = {},
+	}
+
+	HitboxTracked[Root] = Data
+
+	Root.Color = Color3.new(0, 0, 0)
+	Root.Material = Enum.Material.SmoothPlastic
+
+	table.insert(Data.Conns, Root:GetPropertyChangedSignal("Size"):Connect(function()
+		if HitboxOn then
+			local Target = Vector3.new(HITBOX_RANGE, HITBOX_RANGE, HITBOX_RANGE)
+
+			if Root.Size ~= Target then
+				Root.Size = Target
+			end
+		end
+	end))
+
+	ShapeHitbox(Root)
+end
+
+local function GetHitboxTargets()
+	local List = {}
+	local Seen = {}
+	local MyCharacter = LocalPlayer.Character
+
+	local function Add(Model)
+		if not Model or Model == MyCharacter or not Model:IsA("Model") then
+			return
+		end
+
+		local Root = Model:FindFirstChild("HumanoidRootPart")
+
+		if Root and Root:IsA("BasePart") and not Seen[Root] and Model:FindFirstChildOfClass("Humanoid") then
+			Seen[Root] = true
+			List[#List + 1] = Root
+		end
+	end
+
+	for _, Player in ipairs(Players:GetPlayers()) do
+		if Player ~= LocalPlayer then
+			Add(Player.Character)
+		end
+	end
+
+	local Live = workspace:FindFirstChild("Live")
+
+	if Live then
+		for _, Child in ipairs(Live:GetChildren()) do
+			Add(Child)
+		end
+	end
+
+	for _, Child in ipairs(workspace:GetChildren()) do
+		Add(Child)
+	end
+
+	return List
+end
+
+local function SyncHitboxes()
+	local Present = {}
+
+	for _, Root in ipairs(GetHitboxTargets()) do
+		local Humanoid = Root.Parent and Root.Parent:FindFirstChildOfClass("Humanoid")
+
+		if Humanoid and Humanoid.Health > 0 then
+			Present[Root] = true
+			TrackHitbox(Root)
+		end
+	end
+
+	for Root in pairs(HitboxTracked) do
+		if not Present[Root] or not Root.Parent then
+			RestoreHitbox(Root)
+		end
+	end
+end
+
+local function RestoreAllHitboxes()
+	for Root in pairs(HitboxTracked) do
+		RestoreHitbox(Root)
+	end
+end
+
+local ReachTable = nil
+local ReachOriginal = {}
+local ReachSearched = false
+
+local function FindReach()
+	if ReachSearched then
+		return ReachTable
+	end
+
+	ReachSearched = true
+
+	pcall(function()
+		for _, Inst in ipairs(ReplicatedStorage:GetDescendants()) do
+			if Inst:IsA("ModuleScript") and Inst.Name == "Config" then
+				local Ok, Result = pcall(require, Inst)
+
+				if Ok and type(Result) == "table" and type(Result.Combat) == "table" and type(Result.Combat.Reach) == "table" then
+					ReachTable = Result.Combat.Reach
+
+					for Key, Value in pairs(ReachTable) do
+						if type(Value) == "number" then
+							ReachOriginal[Key] = Value
+						end
+					end
+
+					return
+				end
+			end
+		end
+	end)
+
+	return ReachTable
+end
+
+local function ApplyReach()
+	local Reach = FindReach()
+
+	if not Reach then
+		return
+	end
+
+	local Factor = math.max(HITBOX_RANGE / (ReachOriginal.Bare or 7), 1)
+
+	pcall(function()
+		for Key, Value in pairs(ReachOriginal) do
+			Reach[Key] = Value * Factor
+		end
+	end)
+end
+
+local function RestoreReach()
+	if not ReachTable then
+		return
+	end
+
+	pcall(function()
+		for Key, Value in pairs(ReachOriginal) do
+			ReachTable[Key] = Value
+		end
+	end)
+end
+
+Conn(RunService.Stepped:Connect(function()
+	if not HitboxOn then
+		return
+	end
+
+	local Now = os.clock()
+
+	if Now - HitboxLastSync >= 0.25 then
+		HitboxLastSync = Now
+		SyncHitboxes()
+	end
+
+	for Root in pairs(HitboxTracked) do
+		if Root.Parent then
+			ShapeHitbox(Root)
+		end
+	end
+end))
+
+local function SetHitbox(State)
+	HitboxOn = State
+
+	if State then
+		SyncHitboxes()
+		ApplyReach()
+	else
+		RestoreAllHitboxes()
+		RestoreReach()
+	end
+end
+
+local function SetHitboxRange(Value)
+	HITBOX_RANGE = Value
+
+	if HitboxOn then
+		for Root in pairs(HitboxTracked) do
+			if Root.Parent then
+				ShapeHitbox(Root)
+			end
+		end
+
+		ApplyReach()
+	end
+end
+
+local function SetHitboxTransparency(Value)
+	HITBOX_TRANSPARENCY = Value
+
+	for Root in pairs(HitboxTracked) do
+		if Root.Parent then
+			Root.Transparency = Value
+		end
+	end
+end
+
+OnCleanup(function()
+	ConnectOn = false
+	HitboxOn = false
+	RestoreAllHitboxes()
+	RestoreReach()
+end)
+
+------------------------------------------------------------------
+-- DELAYS: no punch delay / no stomp delay (+ stomp watcher for auto connect)
+------------------------------------------------------------------
+local NoPunchOn = false
+local NoStompOn = false
+local PunchGap = 0.1
+local StompGap = 0
+local LastCanAttack = true
+local LockStartedAt = 0
+local LastStomping = false
+local StompStartedAt = 0
+
+Conn(RunService.Heartbeat:Connect(function()
+	if not NoPunchOn and not NoStompOn and not ConnectOn then
+		LastCanAttack = true
+		LastStomping = false
+		return
+	end
+
+	if not EnsureModules() then
+		return
+	end
+
+	local Now = os.clock()
+
+	pcall(function()
+		local Active = Modules.AttackState.Active
+
+		if not Active then
+			return
+		end
+
+		if NoPunchOn then
+			local CanAttack = Active.CanAttack
+
+			if CanAttack == false and LastCanAttack ~= false then
+				LockStartedAt = Now
+			end
+
+			LastCanAttack = CanAttack
+
+			if CanAttack == false and IsAlive() and Now - LockStartedAt >= PunchGap then
+				Active.CanAttack = true
+				LastCanAttack = true
+			end
+		end
+
+		local Stomping = Active.Stomping == true
+		local Started = Stomping and not LastStomping
+		LastStomping = Stomping
+
+		if Started and Active.CurrentKind == "Stomp" and Active.CurrentAction then
+			StompStartedAt = Now
+
+			if ConnectOn then
+				OnAction(Active.CurrentAction, "Stomp")
+			end
+		end
+
+		if NoStompOn and Active.CurrentKind == "Stomp" and Now - StompStartedAt >= StompGap then
+			local Track = Active.CurrentAction
+
+			if Track and Track.IsPlaying then
+				Active.CanAttack = true
+				Active.Stomping = false
+			end
+		end
+	end)
+end))
+
+local function SetNoPunchDelay(State)
+	NoPunchOn = State
+
+	if State then
+		task.spawn(LoadModules)
+	end
+end
+
+local function SetNoStompDelay(State)
+	NoStompOn = State
+
+	if State then
+		task.spawn(LoadModules)
+	end
+end
+
+------------------------------------------------------------------
+-- ANTI STUN
+------------------------------------------------------------------
+local AntiStunOn = false
+local BaseSpeeds = setmetatable({}, { __mode = "k" })
+
+Conn(RunService.Heartbeat:Connect(function()
+	if not AntiStunOn then
+		return
+	end
+
+	if not EnsureModules() then
+		return
+	end
+
+	local Active = Modules.AttackState.Active
+	local M1 = Active and Active.CurrentM1
+
+	if not M1 then
+		return
+	end
+
+	pcall(function()
+		if not M1.IsPlaying then
+			return
+		end
+
+		local Speed = M1.Speed
+
+		if BaseSpeeds[M1] == nil and Speed > 0.2 then
+			BaseSpeeds[M1] = Speed
+		end
+
+		if Speed > 0 and Speed <= 0.1 then
+			M1:AdjustSpeed(BaseSpeeds[M1] or 1)
+		end
+	end)
+end))
+
+local function SetAntiStun(State)
+	AntiStunOn = State
+
+	if State then
+		task.spawn(LoadModules)
+	end
+end
+
+------------------------------------------------------------------
+-- SPEED: punch / stomp animation speed
+------------------------------------------------------------------
+local PunchSpeed = 1.7
+local StompSpeed = 1
+
+local PUNCH_IDS = {
+	"18312333191", "18312335714", "18312338197", "18312340119",
+	"17819438450", "17819441388", "17819444004", "17819446225",
+}
+
+local STOMP_IDS = { "18362264385", "17837722603" }
+
+local TrackKinds = setmetatable({}, { __mode = "k" })
+
+local function HasAnimId(Track, Ids)
+	local Animation = Track.Animation
+
+	if not Animation then
+		return false
+	end
+
+	local AnimId = tostring(Animation.AnimationId)
+
+	for _, Id in ipairs(Ids) do
+		if string.find(AnimId, Id, 1, true) then
+			return true
+		end
+	end
+
+	return false
+end
+
+local function KindOf(Track)
+	local Cached = TrackKinds[Track]
+
+	if Cached ~= nil then
+		return Cached
+	end
+
+	local Kind = false
+
+	if HasAnimId(Track, PUNCH_IDS) then
+		Kind = "punch"
+	elseif HasAnimId(Track, STOMP_IDS) then
+		Kind = "stomp"
+	end
+
+	TrackKinds[Track] = Kind
+
+	return Kind
+end
+
+Conn(RunService.Heartbeat:Connect(function()
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+	local Animator = Humanoid and Humanoid:FindFirstChildOfClass("Animator")
+
+	if not Animator then
+		return
+	end
+
+	for _, Track in ipairs(Animator:GetPlayingAnimationTracks()) do
+		local Kind = KindOf(Track)
+
+		if Kind then
+			local Wanted = Kind == "punch" and PunchSpeed or StompSpeed
+
+			if Kind == "punch" or Wanted > 1 then
+				local Speed = Track.Speed
+
+				if Speed > 0.1 and math.abs(Speed - Wanted) > 0.02 then
+					pcall(function()
+						Track:AdjustSpeed(Wanted)
+					end)
+				end
+			end
+		end
+	end
+end))
+
+------------------------------------------------------------------
+-- WEAVE (movement tab)
+------------------------------------------------------------------
+local WeaveOn = false
+local GlideOn = false
+local GlideDistance = 2.2
+local Linger = 0.4
+local WalkOn = false
+local WalkDefault = 11
+local WalkSetting = 11
+
+local SlideOn = false
+local SlideSpeed = 10
+
+local ANIM_SPEED = 0.9
+local FLIP_P = 0.27
+local MIN_SPACING = 0.2
+local RECOVER_AFTER = 0.05
+local RECOVER_SPACING = 0.22
+local FAST_SPACING = 0.10
+
+local Held = { Space = false, L2 = false, Game = false }
+local Weaving = false
+local SignalOn = false
+local LingerUntil = nil
+local LastFire = 0
+local PunchFlipAt = nil
+local LastCanAttackPoll = true
+local LastDashDirection = nil
+local DashBlockedUntil = 0
+local OwnTrack = nil
+local OwnDirection = nil
+local OwnLooped = false
+local WeaveBlocked = false
+local SpaceBound = false
+local OriginalWeave = {}
+local FramesOn = false
+local OffSince = nil
+local FramesConn = nil
+local ToolConn = nil
+local InputHooked = false
+local LockedSpeed = nil
+local MomentumCleared = false
+local TrackCache = { Character = nil, Style = nil, Weave = nil }
+
+local Offsets = {
+	Front = CFrame.new(0, 0, -2.2),
+	Back = CFrame.new(0, 0, 2.2),
+	Right = CFrame.new(2.2, 0, 0),
+	Left = CFrame.new(-2.2, 0, 0),
+}
+
+local function SpaceHeld()
+	return Held.Space or Held.L2 or Held.Game
+end
+
+local function ClearHeld()
+	Held.Space = false
+	Held.L2 = false
+	Held.Game = false
+end
+
+local function WalkCustom()
+	return WalkOn and math.abs(WalkSetting - WalkDefault) > 0.01
+end
+
+local function RestoreWalkSpeed()
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+	if Humanoid and not Weaving then
+		Humanoid.WalkSpeed = WalkDefault
+	end
+end
+
+local function GetWeaveTracks()
+	local AttackState = Modules.AttackState
+	local Character = LocalPlayer.Character
+
+	if not AttackState or not Character then
+		return nil
+	end
+
+	local Style
+	pcall(function()
+		Style = AttackState.StyleName()
+	end)
+
+	if TrackCache.Weave and TrackCache.Character == Character and TrackCache.Style == Style then
+		return TrackCache.Weave
+	end
+
+	local Weave
+	pcall(function()
+		local Set = AttackState.StyleSet()
+		Weave = Set and Set.Weave
+	end)
+
+	TrackCache.Character = Character
+	TrackCache.Style = Style
+	TrackCache.Weave = Weave
+
+	return Weave
+end
+
+local function CurrentDirection()
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+	local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+	if not Humanoid or not Root then
+		return nil
+	end
+
+	local Move = Humanoid.MoveDirection
+
+	if Move.Magnitude <= 0 then
+		return nil
+	end
+
+	local Forward = Move:Dot(Root.CFrame.LookVector)
+	local Side = Move:Dot(Root.CFrame.RightVector)
+
+	if Forward >= 0.5 then
+		return "Front", Root
+	elseif Forward <= -0.5 then
+		return "Back", Root
+	elseif Side >= 0.9 then
+		return "Right", Root
+	elseif Side <= -0.9 then
+		return "Left", Root
+	end
+
+	return nil
+end
+
+local function StopOwnTrack()
+	if OwnTrack then
+		local Track = OwnTrack
+
+		pcall(function()
+			Track.Looped = OwnLooped
+
+			if Track.IsPlaying then
+				Track:Stop()
+			end
+		end)
+	end
+
+	OwnTrack = nil
+	OwnDirection = nil
+end
+
+local function Dash(Root, Direction)
+	if not GlideOn then
+		return
+	end
+
+	local Now = os.clock()
+
+	if Now < DashBlockedUntil or LastDashDirection == Direction then
+		return
+	end
+
+	local Existing = Root:FindFirstChildOfClass("BodyPosition")
+
+	if Existing then
+		Existing:Destroy()
+		return
+	end
+
+	LastDashDirection = Direction
+	DashBlockedUntil = Now + 0.3
+
+	local Way = (Root.CFrame * Offsets[Direction]).Position - Root.Position
+
+	if Way.Magnitude <= 0 then
+		return
+	end
+
+	local Target = Root.Position + Way.Unit * GlideDistance
+	local Made = false
+
+	if Modules.Movers then
+		Made = pcall(function()
+			Modules.Movers.Create("BodyPosition", "WeaveMove", {
+				MaxForce = Vector3.new(30000, 0, 30000),
+				P = 220,
+				D = 0,
+				Position = Target,
+			}, Root, 0.1)
+		end)
+	end
+
+	if not Made then
+		local Mover = Instance.new("BodyPosition")
+		Mover.Name = "WeaveMove"
+		Mover.MaxForce = Vector3.new(30000, 0, 30000)
+		Mover.P = 220
+		Mover.D = 0
+		Mover.Position = Target
+		Mover.Parent = Root
+
+		task.delay(0.1, function()
+			if Mover.Parent then
+				Mover:Destroy()
+			end
+		end)
+	end
+end
+
+local function UpdateWeave()
+	local Direction, Root = CurrentDirection()
+
+	if not Direction then
+		StopOwnTrack()
+		return
+	end
+
+	local Tracks = GetWeaveTracks()
+	local Track = Tracks and Tracks[Direction]
+
+	if not Track then
+		return
+	end
+
+	if OwnTrack == Track and Track.IsPlaying then
+		pcall(function()
+			if math.abs(Track.Speed - ANIM_SPEED) > 0.01 then
+				Track:AdjustSpeed(ANIM_SPEED)
+			end
+		end)
+
+		return
+	end
+
+	if OwnTrack and OwnTrack ~= Track then
+		StopOwnTrack()
+	end
+
+	if OwnTrack ~= Track then
+		OwnLooped = Track.Looped
+		OwnTrack = Track
+	end
+
+	Track.Looped = true
+	Track:Play(0.1, 1, ANIM_SPEED)
+
+	if OwnDirection ~= Direction then
+		OwnDirection = Direction
+		Dash(Root, Direction)
+	end
+end
+
+local function FireWeave(State)
+	local Combat = Modules.Combat
+
+	if not Combat then
+		return
+	end
+
+	pcall(function()
+		Combat.Weave:Fire(State)
+	end)
+
+	if State then
+		LastFire = os.clock()
+	end
+end
+
+local function FireFlip()
+	FireWeave(false)
+	FireWeave(true)
+end
+
+local function StopWeave()
+	Weaving = false
+	LastDashDirection = nil
+	LingerUntil = nil
+
+	if SignalOn then
+		SignalOn = false
+		FireWeave(false)
+	end
+
+	StopOwnTrack()
+end
+
+local function Tick()
+	if not WeaveOn or not Modules.Combat then
+		return
+	end
+
+	local Now = os.clock()
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+	local Alive = Humanoid ~= nil and Humanoid.Health > 0
+
+	if not Alive then
+		Weaving = false
+		SignalOn = false
+		LingerUntil = nil
+		StopOwnTrack()
+		return
+	end
+
+	if not HasFight() then
+		if SpaceHeld() or Weaving or SignalOn then
+			ClearHeld()
+			StopWeave()
+		end
+
+		return
+	end
+
+	local CanAttackNow = true
+
+	pcall(function()
+		CanAttackNow = Modules.AttackState.Active.CanAttack ~= false
+	end)
+
+	if CanAttackNow and not LastCanAttackPoll then
+		PunchFlipAt = Now
+	end
+
+	LastCanAttackPoll = CanAttackNow
+
+	local Moving = Humanoid.MoveDirection.Magnitude > 0.05
+	local WantWeave = SpaceHeld() and Moving
+
+	if WantWeave then
+		if not Weaving then
+			Weaving = true
+			LastDashDirection = nil
+		end
+
+		if not SignalOn then
+			PunchFlipAt = nil
+		end
+
+		SignalOn = true
+		LingerUntil = nil
+
+		UpdateWeave()
+	elseif Weaving then
+		Weaving = false
+		LastDashDirection = nil
+		StopOwnTrack()
+
+		if SignalOn then
+			LingerUntil = Now + Linger
+		end
+	end
+
+	if SignalOn then
+		if not WantWeave and LingerUntil and Now >= LingerUntil then
+			SignalOn = false
+			LingerUntil = nil
+			FireWeave(false)
+		else
+			local Gap = Now - LastFire
+			local Send = Gap >= math.max(FLIP_P, MIN_SPACING)
+
+			if not Send and PunchFlipAt and Now >= PunchFlipAt and Gap >= FAST_SPACING then
+				PunchFlipAt = nil
+				Send = true
+			end
+
+			if not Send and not FramesOn and OffSince and Now - OffSince >= RECOVER_AFTER and Gap >= RECOVER_SPACING then
+				Send = true
+			end
+
+			if Send then
+				FireFlip()
+			end
+		end
+	end
+end
+
+local function BlockGameWeave()
+	if WeaveBlocked or SpaceBound or not Modules.Weave then
+		return
+	end
+
+	local W = Modules.Weave
+	local Ok = pcall(function()
+		OriginalWeave.Set = W.Set
+		OriginalWeave.Play = W.Play
+		OriginalWeave.StopTrack = W.StopTrack
+		OriginalWeave.Reset = W.Reset
+
+		W.Set = function() end
+		W.Play = function() end
+		W.StopTrack = function() end
+		W.Reset = function() end
+	end)
+
+	if Ok and W.Set ~= OriginalWeave.Set then
+		WeaveBlocked = true
+
+		if Modules.AttackState and Modules.AttackState.Active then
+			Modules.AttackState.Active.Weaving = false
+		end
+	else
+		pcall(function()
+			W.Set = OriginalWeave.Set or W.Set
+			W.Play = OriginalWeave.Play or W.Play
+			W.StopTrack = OriginalWeave.StopTrack or W.StopTrack
+			W.Reset = OriginalWeave.Reset or W.Reset
+		end)
+
+		SpaceBound = true
+
+		ContextActionService:BindActionAtPriority(
+			"JellyBlockSpace",
+			function()
+				return Enum.ContextActionResult.Sink
+			end,
+			false,
+			Enum.ContextActionPriority.High.Value + 1,
+			Enum.KeyCode.Space
+		)
+	end
+end
+
+local function UnblockGameWeave()
+	if WeaveBlocked and Modules.Weave then
+		pcall(function()
+			Modules.Weave.Set = OriginalWeave.Set
+			Modules.Weave.Play = OriginalWeave.Play
+			Modules.Weave.StopTrack = OriginalWeave.StopTrack
+			Modules.Weave.Reset = OriginalWeave.Reset
+		end)
+	end
+
+	WeaveBlocked = false
+
+	if SpaceBound then
+		SpaceBound = false
+		ContextActionService:UnbindAction("JellyBlockSpace")
+	end
+end
+
+local function HookGameInput()
+	if InputHooked or not Modules.Input then
+		return
+	end
+
+	InputHooked = true
+
+	pcall(function()
+		Modules.Input.Began:Connect(function(Action)
+			if Action == "Weave" and WeaveOn and HasFight() then
+				Held.Game = true
+				Tick()
+			end
+		end)
+
+		Modules.Input.Ended:Connect(function(Action)
+			if Action == "Weave" then
+				Held.Game = false
+				Tick()
+			end
+		end)
+	end)
+end
+
+local function EnforceNoSlide()
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+	if not Humanoid then
+		LockedSpeed = nil
+		return
+	end
+
+	local Running = WeaveOn and Weaving and HasFight() and not SlideOn
+
+	if Running then
+		if not LockedSpeed and Humanoid.WalkSpeed > 0 then
+			LockedSpeed = Humanoid.WalkSpeed
+		end
+
+		if LockedSpeed and Humanoid.WalkSpeed ~= 0 then
+			Humanoid.WalkSpeed = 0
+		end
+
+		if not MomentumCleared then
+			MomentumCleared = true
+
+			local Root = Character:FindFirstChild("HumanoidRootPart")
+
+			if Root then
+				local Velocity = Root.AssemblyLinearVelocity
+				Root.AssemblyLinearVelocity = Vector3.new(0, Velocity.Y, 0)
+			end
+		end
+	else
+		MomentumCleared = false
+
+		if LockedSpeed then
+			if Humanoid.WalkSpeed == 0 then
+				Humanoid.WalkSpeed = WalkCustom() and WalkSetting or LockedSpeed
+			end
+
+			LockedSpeed = nil
+		end
+	end
+end
+
+local function WatchFrames(Character)
+	if FramesConn then
+		FramesConn:Disconnect()
+		FramesConn = nil
+	end
+
+	FramesOn = false
+	OffSince = os.clock()
+
+	if not Character then
+		return
+	end
+
+	FramesOn = Character:GetAttribute("WeaveFrames") == true
+	OffSince = (not FramesOn) and os.clock() or nil
+
+	FramesConn = Character:GetAttributeChangedSignal("WeaveFrames"):Connect(function()
+		FramesOn = Character:GetAttribute("WeaveFrames") == true
+
+		if FramesOn then
+			OffSince = nil
+		elseif not OffSince then
+			OffSince = os.clock()
+		end
+	end)
+end
+
+local function WatchTools(Character)
+	if ToolConn then
+		ToolConn:Disconnect()
+		ToolConn = nil
+	end
+
+	if not Character then
+		return
+	end
+
+	ToolConn = Character.ChildRemoved:Connect(function(Child)
+		if Child.Name == "Fight" and WeaveOn then
+			ClearHeld()
+			StopWeave()
+		end
+	end)
+end
+
+pcall(function()
+	RunService:UnbindFromRenderStep("JellyNoSlide")
+end)
+
+RunService:BindToRenderStep("JellyNoSlide", Enum.RenderPriority.Last.Value, EnforceNoSlide)
+Conn(RunService.Heartbeat:Connect(EnforceNoSlide))
+
+Conn(RunService.RenderStepped:Connect(function()
+	if not WalkCustom() or Weaving then
+		return
+	end
+
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+	if Humanoid and Humanoid.Health > 0 and Humanoid.WalkSpeed ~= WalkSetting then
+		Humanoid.WalkSpeed = WalkSetting
+	end
+end))
+
+if LocalPlayer.Character then
+	WatchFrames(LocalPlayer.Character)
+	WatchTools(LocalPlayer.Character)
+end
+
+Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+	WatchFrames(Character)
+	WatchTools(Character)
+
+	TrackCache.Weave = nil
+	OwnTrack = nil
+	OwnDirection = nil
+	LastDashDirection = nil
+
+	Held.Space = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+	Held.L2 = false
+	Held.Game = false
+end))
+
+Conn(UserInputService.InputBegan:Connect(function(Input)
+	if not WeaveOn then
+		return
+	end
+
+	if Input.KeyCode == Enum.KeyCode.Space then
+		if UserInputService:GetFocusedTextBox() or not HasFight() then
+			return
+		end
+
+		Held.Space = true
+		Tick()
+	elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then
+		if not HasFight() then
+			return
+		end
+
+		Held.L2 = true
+		Tick()
+	end
+end))
+
+Conn(UserInputService.InputEnded:Connect(function(Input)
+	if Input.KeyCode == Enum.KeyCode.Space then
+		Held.Space = false
+		Tick()
+	elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then
+		Held.L2 = false
+		Tick()
+	end
+end))
+
+Conn(UserInputService.WindowFocusReleased:Connect(ClearHeld))
+
+Conn(RunService.Heartbeat:Connect(Tick))
+
+local function SetWeave(State)
+	WeaveOn = State
+
+	if State then
+		task.spawn(function()
+			if LoadModules() and WeaveOn then
+				BlockGameWeave()
+			end
+
+			HookGameInput()
+		end)
+	else
+		ClearHeld()
+		StopWeave()
+		UnblockGameWeave()
+	end
+end
+
+local function SetGlide(State)
+	GlideOn = State
+end
+
+local function SetGlideDistance(Value)
+	GlideDistance = Value
+end
+
+local function SetWalk(State)
+	local WasCustom = WalkCustom()
+	WalkOn = State
+
+	if WasCustom and not WalkCustom() then
+		RestoreWalkSpeed()
+	end
+end
+
+local function SetWalkValue(Value)
+	local WasCustom = WalkCustom()
+	WalkSetting = Value
+
+	if WasCustom and not WalkCustom() then
+		RestoreWalkSpeed()
+	end
+end
+
+------------------------------------------------------------------
+-- WEAVE SLIDE: keeps your speed capped while weaving
+------------------------------------------------------------------
+local SLIDE_IDS = {
+	"18312351760", "18312346524", "18312348771", "18312344029",
+	"17819695187", "17819683172", "17819691229", "17819688197",
+}
+
+local SlideHumanoid = nil
+local SlideRoot = nil
+local SlideAnimator = nil
+local SlideWasWeaving = false
+local SlideFallback = 11
+
+local function SlideIsWeaving()
+	if Weaving then
+		return true
+	end
+
+	if not SlideAnimator then
+		return false
+	end
+
+	for _, Track in ipairs(SlideAnimator:GetPlayingAnimationTracks()) do
+		if Track.IsPlaying and Track.Animation then
+			local AnimId = tostring(Track.Animation.AnimationId)
+
+			for _, Id in ipairs(SLIDE_IDS) do
+				if string.find(AnimId, Id, 1, true) then
+					return true
+				end
+			end
+		end
+	end
+
+	return false
+end
+
+local function BindSlide(Character)
+	SlideHumanoid = nil
+	SlideRoot = nil
+	SlideAnimator = nil
+	SlideWasWeaving = false
+
+	if not Character then
+		return
+	end
+
+	local Humanoid = Character:WaitForChild("Humanoid", 5)
+	local Root = Character:WaitForChild("HumanoidRootPart", 5)
+
+	if not Humanoid or not Root then
+		return
+	end
+
+	SlideHumanoid = Humanoid
+	SlideRoot = Root
+	SlideAnimator = Humanoid:FindFirstChildOfClass("Animator") or Humanoid:WaitForChild("Animator", 5)
+end
+
+if LocalPlayer.Character then
+	task.spawn(BindSlide, LocalPlayer.Character)
+end
+
+Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+	task.spawn(BindSlide, Character)
+end))
+
+Conn(RunService.RenderStepped:Connect(function()
+	if not SlideOn or not SlideHumanoid or SlideHumanoid.Health <= 0 then
+		SlideWasWeaving = false
+		return
+	end
+
+	if SlideIsWeaving() then
+		SlideWasWeaving = true
+		SlideHumanoid.WalkSpeed = SlideSpeed
+		SlideHumanoid.AutoRotate = true
+
+		if SlideRoot then
+			for _, Child in ipairs(SlideRoot:GetChildren()) do
+				if Child:IsA("LinearVelocity") or Child:IsA("BodyVelocity")
+					or Child:IsA("VectorForce") or Child:IsA("BodyThrust") then
+					Child:Destroy()
+				end
+			end
+
+			local Velocity = SlideRoot.AssemblyLinearVelocity
+			local Horizontal = Vector3.new(Velocity.X, 0, Velocity.Z)
+			local MaxSpeed = SlideSpeed + 1
+
+			if Horizontal.Magnitude > MaxSpeed then
+				local Capped = Horizontal.Unit * MaxSpeed
+				SlideRoot.AssemblyLinearVelocity = Vector3.new(Capped.X, Velocity.Y, Capped.Z)
+			end
+		end
+	elseif SlideWasWeaving then
+		SlideWasWeaving = false
+		SlideHumanoid.WalkSpeed = WalkCustom() and WalkSetting or SlideFallback
+		SlideHumanoid.AutoRotate = true
+	end
+end))
+
+local function SetSlide(State)
+	SlideOn = State
+
+	if not State and SlideWasWeaving and SlideHumanoid then
+		SlideWasWeaving = false
+		SlideHumanoid.WalkSpeed = WalkCustom() and WalkSetting or SlideFallback
+	end
+end
+
+local function SetSlideSpeed(Value)
+	SlideSpeed = Value
+end
+
+OnCleanup(function()
+	WeaveOn = false
+	GlideOn = false
+	SlideOn = false
+	StopWeave()
+	UnblockGameWeave()
+
+	if FramesConn then
+		FramesConn:Disconnect()
+	end
+
+	if ToolConn then
+		ToolConn:Disconnect()
+	end
+
+	pcall(function()
+		RunService:UnbindFromRenderStep("JellyNoSlide")
+	end)
+end)
+
+------------------------------------------------------------------
+-- VISUAL: anti bounce, headless, accessories, boost fps
+------------------------------------------------------------------
+local AntiBounceOn = false
+local OriginalGravity = workspace.Gravity
+local BounceUntil = 0
+local BounceStateConn = nil
+
+local function BindBounceHumanoid(Character)
+	if BounceStateConn then
+		BounceStateConn:Disconnect()
+		BounceStateConn = nil
+	end
+
+	local Humanoid = Character and Character:WaitForChild("Humanoid", 5)
+
+	if not Humanoid then
+		return
+	end
+
+	BounceStateConn = Humanoid.StateChanged:Connect(function(_, New)
+		if New == Enum.HumanoidStateType.Landed then
+			BounceUntil = os.clock() + 0.25
+		elseif New == Enum.HumanoidStateType.Jumping then
+			BounceUntil = 0
+		end
+	end)
+end
+
+if LocalPlayer.Character then
+	task.spawn(BindBounceHumanoid, LocalPlayer.Character)
+end
+
+Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+	task.spawn(BindBounceHumanoid, Character)
+end))
+
+Conn(RunService.Heartbeat:Connect(function()
+	if not AntiBounceOn then
+		return
+	end
+
+	if workspace.Gravity ~= 700 then
+		workspace.Gravity = 700
+	end
+
+	if os.clock() >= BounceUntil then
+		return
+	end
+
+	local Character = LocalPlayer.Character
+	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+	local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+	if not Humanoid or not Root then
+		return
+	end
+
+	if Humanoid.FloorMaterial ~= Enum.Material.Air then
+		local Velocity = Root.AssemblyLinearVelocity
+
+		if Velocity.Y > 0 then
+			Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, 0, Velocity.Z)
+		end
+	end
+end))
+
+local function SetAntiBounce(State)
+	AntiBounceOn = State
+
+	if State then
+		OriginalGravity = workspace.Gravity
+		workspace.Gravity = 700
+	else
+		workspace.Gravity = OriginalGravity
+		BounceUntil = 0
+	end
+end
+
+-- headless + accessories
+local HeadlessOn = false
+local HeadOriginal = setmetatable({}, { __mode = "k" })
+
+local function ApplyHeadless()
+	local Character = LocalPlayer.Character
+	local Head = Character and Character:FindFirstChild("Head")
+
+	if not Head then
+		return
+	end
+
+	if HeadlessOn then
+		if HeadOriginal[Head] == nil then
+			HeadOriginal[Head] = Head.Transparency
+		end
+
+		Head.Transparency = 1
+
+		for _, Child in ipairs(Head:GetChildren()) do
+			if Child:IsA("Decal") then
+				if HeadOriginal[Child] == nil then
+					HeadOriginal[Child] = Child.Transparency
+				end
+
+				Child.Transparency = 1
+			end
+		end
+	else
+		for Inst, Value in pairs(HeadOriginal) do
+			if Inst.Parent then
+				Inst.Transparency = Value
+			end
+		end
+
+		table.clear(HeadOriginal)
+	end
+end
+
+Conn(RunService.Heartbeat:Connect(function()
+	if HeadlessOn then
+		ApplyHeadless()
+	end
+end))
+
+local function SetHeadless(State)
+	HeadlessOn = State
+	ApplyHeadless()
+end
+
+local Show = { Head = true, Hair = true, Face = true, Neck = true }
+local AccessoryOriginal = setmetatable({}, { __mode = "k" })
+
+local function CategoryOf(Accessory)
+	local Type
+
+	pcall(function()
+		Type = Accessory.AccessoryType
+	end)
+
+	if Type == Enum.AccessoryType.Hat then
+		return "Head"
+	elseif Type == Enum.AccessoryType.Hair then
+		return "Hair"
+	elseif Type == Enum.AccessoryType.Face then
+		return "Face"
+	elseif Type == Enum.AccessoryType.Neck then
+		return "Neck"
+	end
+
+	local Handle = Accessory:FindFirstChild("Handle")
+
+	if Handle then
+		if Handle:FindFirstChild("HairAttachment") then
+			return "Hair"
+		elseif Handle:FindFirstChild("HatAttachment") then
+			return "Head"
+		elseif Handle:FindFirstChild("FaceFrontAttachment") or Handle:FindFirstChild("FaceCenterAttachment") then
+			return "Face"
+		elseif Handle:FindFirstChild("NeckAttachment") then
+			return "Neck"
+		end
+	end
+
+	return nil
+end
+
+local function SetAccessoryVisible(Accessory, Visible)
+	for _, Part in ipairs(Accessory:GetDescendants()) do
+		if Part:IsA("BasePart") then
+			if Visible then
+				local Original = AccessoryOriginal[Part]
+
+				if Original ~= nil then
+					Part.Transparency = Original
+					AccessoryOriginal[Part] = nil
+				end
+			else
+				if AccessoryOriginal[Part] == nil then
+					AccessoryOriginal[Part] = Part.Transparency
+				end
+
+				Part.Transparency = 1
+			end
+		end
+	end
+end
+
+local function ApplyAccessories()
+	local Character = LocalPlayer.Character
+
+	if not Character then
+		return
+	end
+
+	for _, Child in ipairs(Character:GetChildren()) do
+		if Child:IsA("Accessory") then
+			local Category = CategoryOf(Child)
+
+			if Category then
+				SetAccessoryVisible(Child, Show[Category])
+			end
+		end
+	end
+end
+
+local function WatchAccessories(Character)
+	Conn(Character.ChildAdded:Connect(function(Child)
+		if Child:IsA("Accessory") then
+			Child:WaitForChild("Handle", 3)
+			task.wait()
+
+			local Category = CategoryOf(Child)
+
+			if Category and not Show[Category] then
+				SetAccessoryVisible(Child, false)
+			end
+		end
+	end))
+end
+
+if LocalPlayer.Character then
+	WatchAccessories(LocalPlayer.Character)
+end
+
+Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+	WatchAccessories(Character)
+
+	task.wait(1)
+	ApplyAccessories()
+end))
+
+local function SetAccessoryShown(Name, State)
+	Show[Name] = State
+	ApplyAccessories()
+end
+
+OnCleanup(function()
+	HeadlessOn = false
+	ApplyHeadless()
+
+	if BounceStateConn then
+		BounceStateConn:Disconnect()
+	end
+end)
+
+-- boost fps
+local BoostOn = false
+local BoostOriginal = setmetatable({}, { __mode = "k" })
+local SavedQuality = nil
+local BoostConns = {}
+
+local function SetProp(Inst, Prop, Value)
+	pcall(function()
+		local Saved = BoostOriginal[Inst]
+
+		if not Saved then
+			Saved = {}
+			BoostOriginal[Inst] = Saved
+		end
+
+		if Saved[Prop] == nil then
+			Saved[Prop] = Inst[Prop]
+		end
+
+		Inst[Prop] = Value
+	end)
+end
+
+local function InCharacter(Inst)
+	local Model = Inst:FindFirstAncestorOfClass("Model")
+	return Model ~= nil and Model:FindFirstChildOfClass("Humanoid") ~= nil
+end
+
+local function ReduceInstance(Inst)
+	if Inst:IsA("Terrain") then
+		return
+	end
+
+	if Inst:IsA("BasePart") then
+		SetProp(Inst, "Material", Enum.Material.SmoothPlastic)
+		SetProp(Inst, "Reflectance", 0)
+		SetProp(Inst, "CastShadow", false)
+	elseif Inst:IsA("ParticleEmitter") or Inst:IsA("Trail") or Inst:IsA("Smoke")
+		or Inst:IsA("Fire") or Inst:IsA("Sparkles") or Inst:IsA("PostEffect") or Inst:IsA("Clouds") then
+		SetProp(Inst, "Enabled", false)
+	elseif Inst:IsA("Decal") then
+		if not InCharacter(Inst) then
+			SetProp(Inst, "Transparency", 1)
+		end
+	elseif Inst:IsA("Atmosphere") then
+		SetProp(Inst, "Density", 0)
+		SetProp(Inst, "Haze", 0)
+	end
+end
+
+local function EnableBoost()
+	pcall(function()
+		SavedQuality = settings().Rendering.QualityLevel
+		settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+	end)
+
+	SetProp(Lighting, "GlobalShadows", false)
+	SetProp(Lighting, "ShadowSoftness", 0)
+	SetProp(Lighting, "EnvironmentDiffuseScale", 0)
+	SetProp(Lighting, "EnvironmentSpecularScale", 0)
+
+	local Terrain = workspace:FindFirstChildOfClass("Terrain")
+
+	if Terrain then
+		SetProp(Terrain, "WaterWaveSize", 0)
+		SetProp(Terrain, "WaterWaveSpeed", 0)
+		SetProp(Terrain, "WaterReflectance", 0)
+		SetProp(Terrain, "Decoration", false)
+	end
+
+	for _, Inst in ipairs(Lighting:GetDescendants()) do
+		ReduceInstance(Inst)
+	end
+
+	table.insert(BoostConns, Lighting.DescendantAdded:Connect(function(Inst)
+		if BoostOn then
+			ReduceInstance(Inst)
+		end
+	end))
+
+	table.insert(BoostConns, workspace.DescendantAdded:Connect(function(Inst)
+		if BoostOn then
+			ReduceInstance(Inst)
+		end
+	end))
+
+	task.spawn(function()
+		local Count = 0
+
+		for _, Inst in ipairs(workspace:GetDescendants()) do
+			if not BoostOn then
+				return
+			end
+
+			ReduceInstance(Inst)
+			Count += 1
+
+			if Count % 400 == 0 then
+				task.wait()
+			end
+		end
+	end)
+end
+
+local function DisableBoost()
+	for _, C in ipairs(BoostConns) do
+		C:Disconnect()
+	end
+
+	table.clear(BoostConns)
+
+	for Inst, Props in pairs(BoostOriginal) do
+		for Prop, Value in pairs(Props) do
+			pcall(function()
+				Inst[Prop] = Value
+			end)
+		end
+	end
+
+	table.clear(BoostOriginal)
+
+	if SavedQuality then
+		pcall(function()
+			settings().Rendering.QualityLevel = SavedQuality
+		end)
+	end
+end
+
+local function SetBoostFps(State)
+	BoostOn = State
+
+	if State then
+		EnableBoost()
+	else
+		DisableBoost()
+	end
+end
+
+OnCleanup(function()
+	BoostOn = false
+	DisableBoost()
+end)
+
+------------------------------------------------------------------
+-- SETTINGS: fov changer + stretch res
+------------------------------------------------------------------
+local FovOn = false
+local FovValue = 70
+local FovOriginal = nil
+
+local StretchOn = false
+local StretchValue = 0.75
+
+pcall(function()
+	RunService:UnbindFromRenderStep("JellyFov")
+end)
+
+RunService:BindToRenderStep("JellyFov", Enum.RenderPriority.Camera.Value + 2, function()
+	if not FovOn then
+		return
+	end
+
+	local Camera = workspace.CurrentCamera
+
+	if Camera and Camera.FieldOfView ~= FovValue then
+		Camera.FieldOfView = FovValue
+	end
+end)
+
+pcall(function()
+	RunService:UnbindFromRenderStep("JellyStretch")
+end)
+
+RunService:BindToRenderStep("JellyStretch", Enum.RenderPriority.Camera.Value + 3, function()
+	if not StretchOn then
+		return
+	end
+
+	local Camera = workspace.CurrentCamera
+
+	if Camera then
+		Camera.CFrame = Camera.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, StretchValue, 0, 0, 0, 1)
+	end
+end)
+
+local function SetFov(State)
+	local Camera = workspace.CurrentCamera
+
+	if State then
+		FovOriginal = Camera and Camera.FieldOfView or 70
+	elseif Camera and FovOriginal then
+		Camera.FieldOfView = FovOriginal
+	end
+
+	FovOn = State
+end
+
+local function SetStretch(State)
+	StretchOn = State
+end
+
+OnCleanup(function()
+	pcall(function()
+		RunService:UnbindFromRenderStep("JellyFov")
+	end)
+
+	pcall(function()
+		RunService:UnbindFromRenderStep("JellyStretch")
+	end)
+end)
+
+------------------------------------------------------------------
+-- TABS
+------------------------------------------------------------------
+local Combat = Window:AddTab("Combat")
+
+Combat:AddSection("Expanders")
+Combat:AddToggle("Auto Connect", false, SetAutoConnect)
+Combat:AddSlider("Connect Range", 2, 25, 0.5, 8, function(value)
+	ConnectRange = value
+end)
+Combat:AddToggle("Smart Hitbox", false, nil, "(if your homo)")
+Combat:AddToggle("Hitbox", false, SetHitbox)
+Combat:AddSlider("Hitbox Range", 1, 15, 0.1, 7, SetHitboxRange)
+Combat:AddSlider("Hitbox Transparency", 0.1, 1, 0.1, 0.7, SetHitboxTransparency)
+
+Combat:AddSection("Delays")
+Combat:AddToggle("No Punch Delay", false, SetNoPunchDelay)
+Combat:AddSlider("Punch Delay", 0, 0.3, 0.01, 0.1, function(value)
+	PunchGap = value
+end)
+Combat:AddToggle("No Stomp Delay", false, SetNoStompDelay)
+Combat:AddSlider("Stomp Gap", 0, 1, 0.01, 0, function(value)
+	StompGap = value
+end)
+
+Combat:AddSection("Speed")
+Combat:AddToggle("Anti Stun", false, SetAntiStun)
+Combat:AddSlider("Punch Speed", 1.2, 5, 0.1, 1.7, function(value)
+	PunchSpeed = value
+end)
+Combat:AddSlider("Stomp Speed", 1, 3, 0.1, 1, function(value)
+	StompSpeed = value
+end)
+
+local Movement = Window:AddTab("Movement")
+
+Movement:AddSection("Weave")
+Movement:AddToggle("Weave Mac", false, SetWeave)
+Movement:AddToggle("Weave Glide", false, SetGlide)
+Movement:AddSlider("Glide Distance", 0.5, 10, 0.1, 2.2, SetGlideDistance)
+Movement:AddToggle("Weave Slide", false, SetSlide)
+Movement:AddSlider("Slide Speed", 6, 50, 0.1, 10, SetSlideSpeed)
+Movement:AddToggle("Walk Speed", false, SetWalk)
+Movement:AddSlider("Walk Speed Value", 5, 50, 1, 11, SetWalkValue)
+Movement:AddSlider("Turn Off Delay", 0, 1, 0.05, 0.4, function(value)
+	Linger = value
+end)
+
+local Visual = Window:AddTab("Visual")
+
+Visual:AddToggle("Anti Bounce", false, SetAntiBounce)
+Visual:AddToggle("Anti Collision", false)
+Visual:AddSpacer(8)
+Visual:AddToggle("Headless", false, SetHeadless)
+Visual:AddToggle("Head", true, function(state)
+	SetAccessoryShown("Head", state)
+end)
+Visual:AddToggle("Hair", true, function(state)
+	SetAccessoryShown("Hair", state)
+end)
+Visual:AddToggle("Face", true, function(state)
+	SetAccessoryShown("Face", state)
+end)
+Visual:AddToggle("Neck", true, function(state)
+	SetAccessoryShown("Neck", state)
+end)
+Visual:AddSpacer(8)
+Visual:AddToggle("Boost Fps", false, SetBoostFps)
+
+local PRO_PLACE = 86098085533596
+local ProBusy = false
+local ProButton
+
+ProButton = Visual:AddButton("TP to PRO", function()
+	if ProBusy then
+		return
+	end
+
+	ProBusy = true
+	ProButton.Text = "Teleporting..."
+
+	local Open = {}
+
+	pcall(function()
+		local Url = "https://games.roblox.com/v1/games/" .. PRO_PLACE .. "/servers/Public?sortOrder=Asc&limit=100"
+		local Result = HttpService:JSONDecode(game:HttpGet(Url))
+
+		for _, Server in ipairs(Result.data or {}) do
+			if Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
+				table.insert(Open, Server.id)
+			end
+		end
+	end)
+
+	pcall(function()
+		if #Open > 0 then
+			TeleportService:TeleportToPlaceInstance(PRO_PLACE, Open[math.random(1, #Open)], LocalPlayer)
+		else
+			TeleportService:Teleport(PRO_PLACE, LocalPlayer)
+		end
+	end)
+
+	task.wait(6)
+	ProButton.Text = "TP to PRO"
+	ProBusy = false
+end)
+
+local Settings = Window:AddTab("Settings")
+
+Settings:AddSection("General")
+Settings:AddButton("Reset Position", function()
+	Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+end)
+Settings:AddButton("Reset Size", function()
+	Main.Size = UDim2.fromOffset(WIDTH, HEIGHT)
+end)
+Settings:AddToggle("FOV Changer", false, SetFov)
+Settings:AddSlider("Field of View", 30, 120, 1, 70, function(value)
+	FovValue = value
+end)
+Settings:AddToggle("Stretch Res", false, SetStretch)
+Settings:AddSlider("Stretch", 0.4, 1, 0.01, 0.75, function(value)
+	StretchValue = value
+end)
+
+------------------------------------------------------------------
+-- cleanup (re-running the script shuts the old one down)
+------------------------------------------------------------------
+if getgenv then
+	getgenv()[CLEANUP_KEY] = function()
+		for _, c in ipairs(Connections) do
+			pcall(function()
+				c:Disconnect()
+			end)
+		end
+
+		for _, fn in ipairs(Cleanups) do
+			pcall(fn)
+		end
+
+		pcall(function()
+			Gui:Destroy()
+		end)
+	end
+end
+
+return Window
