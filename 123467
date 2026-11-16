@@ -1,3 +1,7 @@
+if not game:IsLoaded() then
+	game.Loaded:Wait()
+end
+
 local Players = game:GetService("Players")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
@@ -10,6 +14,11 @@ local Lighting = game:GetService("Lighting")
 local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
+
+while not LocalPlayer do
+	task.wait()
+	LocalPlayer = Players.LocalPlayer
+end
 
 local THEME = {
 	Id = "Pink",
@@ -48,6 +57,11 @@ local function IsPress(input)
 		or input.UserInputType == Enum.UserInputType.Touch
 end
 
+local function IsMove(input)
+	return input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch
+end
+
 local Connections = {}
 local Cleanups = {}
 
@@ -60,9 +74,39 @@ local function OnCleanup(fn)
 	table.insert(Cleanups, fn)
 end
 
-------------------------------------------------------------------
--- window
-------------------------------------------------------------------
+-- Shared table: feature blocks below put their functions here and the UI reads them.
+-- (Luau refuses to compile a function with more than 200 locals, so features are split
+-- into separate functions instead of one giant top-level scope.)
+local F = {}
+
+local function Block(name, fn)
+	local ok, err = pcall(fn)
+
+	if not ok then
+		warn("[Jelly Blarc] " .. name .. " failed: " .. tostring(err))
+	end
+end
+
+local function ParentGui(g)
+	pcall(function()
+		if syn and syn.protect_gui then
+			syn.protect_gui(g)
+		end
+	end)
+
+	pcall(function()
+		g.Parent = (gethui and gethui()) or CoreGui
+	end)
+
+	if not g.Parent then
+		pcall(function()
+			g.Parent = LocalPlayer:WaitForChild("PlayerGui")
+		end)
+	end
+end
+
+print("[Jelly Blarc] starting")
+
 local Gui = New("ScreenGui", {
 	Name = "JellyBlarc" .. THEME.Id,
 	ResetOnSpawn = false,
@@ -71,13 +115,7 @@ local Gui = New("ScreenGui", {
 	DisplayOrder = 50,
 })
 
-pcall(function()
-	if syn and syn.protect_gui then
-		syn.protect_gui(Gui)
-	end
-end)
-
-Gui.Parent = (gethui and gethui()) or CoreGui
+ParentGui(Gui)
 
 local IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 local Viewport = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
@@ -135,9 +173,6 @@ local Glow = New("Frame", {
 
 Corner(Glow, UDim.new(1, 0))
 
-------------------------------------------------------------------
--- snow (behind everything)
-------------------------------------------------------------------
 local SnowLayer = New("Frame", {
 	Name = "Snow",
 	Size = UDim2.new(1, 0, 1, 0),
@@ -173,9 +208,6 @@ for i = 1, 85 do
 	}
 end
 
-------------------------------------------------------------------
--- header
-------------------------------------------------------------------
 local Header = New("Frame", {
 	Size = UDim2.new(1, 0, 0, 108),
 	BackgroundTransparency = 1,
@@ -357,7 +389,7 @@ function Window:AddTab(name)
 	end
 
 	local function Next()
-		Tab.Order += 1
+		Tab.Order = Tab.Order + 1
 		return Tab.Order
 	end
 
@@ -622,7 +654,7 @@ function Window:AddTab(name)
 end
 
 Conn(UserInputService.InputChanged:Connect(function(input)
-	if ActiveSlider and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+	if ActiveSlider and IsMove(input) then
 		ActiveSlider(input.Position.X)
 	end
 end))
@@ -643,7 +675,7 @@ do
 	end))
 
 	Conn(UserInputService.InputChanged:Connect(function(input)
-		if Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		if Dragging and IsMove(input) then
 			local d = input.Position - DragStart
 
 			Main.Position = UDim2.new(
@@ -670,7 +702,7 @@ do
 	end))
 
 	Conn(UserInputService.InputChanged:Connect(function(input)
-		if Resizing and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+		if Resizing and IsMove(input) then
 			local d = input.Position - StartMouse
 
 			Main.Size = UDim2.fromOffset(
@@ -688,19 +720,91 @@ do
 end
 
 Conn(UserInputService.InputBegan:Connect(function(input, processed)
+	if input.KeyCode == Enum.KeyCode.ButtonSelect then
+		Main.Visible = not Main.Visible
+		return
+	end
+
 	if not processed and input.KeyCode == Enum.KeyCode.RightControl then
 		Main.Visible = not Main.Visible
 	end
 end))
 
-------------------------------------------------------------------
--- animation loop (snow, border spin, emblem pulse)
-------------------------------------------------------------------
+if IsMobile then
+	local MobileGui = New("ScreenGui", {
+		Name = "JellyBlarcMobile",
+		ResetOnSpawn = false,
+		IgnoreGuiInset = true,
+		ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+		DisplayOrder = 60,
+	})
+
+	ParentGui(MobileGui)
+
+	local Bubble = New("TextButton", {
+		Size = UDim2.fromOffset(48, 48),
+		Position = UDim2.new(0, 14, 0.5, -24),
+		BackgroundColor3 = WHITE,
+		BackgroundTransparency = 0.08,
+		Text = "J",
+		TextColor3 = THEME.Accent,
+		Font = Enum.Font.GothamBlack,
+		TextSize = 20,
+		AutoButtonColor = false,
+		BorderSizePixel = 0,
+	}, MobileGui)
+
+	Corner(Bubble, UDim.new(1, 0))
+	New("UIStroke", { Color = THEME.Accent, Thickness = 2 }, Bubble)
+
+	local BubbleDragging, BubbleMoved, BubbleStart, BubblePos = false, false, nil, nil
+
+	Conn(Bubble.InputBegan:Connect(function(input)
+		if IsPress(input) then
+			BubbleDragging = true
+			BubbleMoved = false
+			BubbleStart = input.Position
+			BubblePos = Bubble.Position
+		end
+	end))
+
+	Conn(UserInputService.InputChanged:Connect(function(input)
+		if BubbleDragging and IsMove(input) then
+			local d = input.Position - BubbleStart
+
+			if d.Magnitude > 6 then
+				BubbleMoved = true
+			end
+
+			if BubbleMoved then
+				Bubble.Position = UDim2.new(
+					BubblePos.X.Scale, BubblePos.X.Offset + d.X,
+					BubblePos.Y.Scale, BubblePos.Y.Offset + d.Y
+				)
+			end
+		end
+	end))
+
+	Conn(UserInputService.InputEnded:Connect(function(input)
+		if BubbleDragging and IsPress(input) then
+			BubbleDragging = false
+
+			if not BubbleMoved then
+				Main.Visible = not Main.Visible
+			end
+		end
+	end))
+
+	OnCleanup(function()
+		MobileGui:Destroy()
+	end)
+end
+
 local AnimClock = 0
 local BorderAngle = 0
 
 Conn(RunService.Heartbeat:Connect(function(dt)
-	AnimClock += dt
+	AnimClock = AnimClock + dt
 
 	BorderAngle = (BorderAngle + 60 * dt) % 360
 	StrokeGradient.Rotation = BorderAngle
@@ -711,7 +815,7 @@ Conn(RunService.Heartbeat:Connect(function(dt)
 	local H = Main.AbsoluteSize.Y
 
 	for _, fl in ipairs(Flakes) do
-		fl.y += fl.vy * 0.7 * dt
+		fl.y = fl.y + fl.vy * 0.7 * dt
 
 		if fl.y > H + 6 then
 			fl.y = -6
@@ -722,8 +826,10 @@ Conn(RunService.Heartbeat:Connect(function(dt)
 	end
 end))
 
+print("[Jelly Blarc] window created")
+
 ------------------------------------------------------------------
--- game modules
+-- Shared game helpers
 ------------------------------------------------------------------
 local Modules = {}
 
@@ -788,7 +894,6 @@ local function IsAlive()
 end
 
 local HAND_PARTS = { "RightHand", "LeftHand", "Right Arm", "Left Arm" }
-local FOOT_PARTS = { "RightFoot", "LeftFoot", "Right Leg", "Left Leg" }
 
 local function ClosestLimb(Character, Names, Position)
 	local Best = nil
@@ -862,2002 +967,3182 @@ local function NearestTarget(Range)
 end
 
 ------------------------------------------------------------------
--- EXPANDERS: auto connect + hitbox
+-- Block 1: Auto Connect + Hitbox
 ------------------------------------------------------------------
-local ConnectOn = false
-local ConnectRange = 8
+Block("Combat (connect/hitbox)", function()
+	local ConnectOn = false
+	local ConnectRange = 8
+	local LastAttackInputAt = -100
+	local AttackInputHooked = false
+	local LastConnectedSeq = nil
+	local ActionToken = 0
 
-local function ReportHit(Action, Kind)
-	local Active = Modules.AttackState and Modules.AttackState.Active
-	local Combat = Modules.Combat
-	local Character = LocalPlayer.Character
+	Conn(UserInputService.InputBegan:Connect(function(Input)
+		if Input.UserInputType == Enum.UserInputType.MouseButton1
+			or Input.KeyCode == Enum.KeyCode.ButtonR2
+			or (IsMobile and not Modules.Input and Input.UserInputType == Enum.UserInputType.Touch) then
+			LastAttackInputAt = os.clock()
+		end
+	end))
 
-	if not ConnectOn or not Active or not Combat or not Character or not IsAlive() then
-		return
+	local function AttackInputRecent()
+		if os.clock() - LastAttackInputAt <= 0.6 then
+			return true
+		end
+
+		local HeldDown = false
+
+		pcall(function()
+			HeldDown = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1)
+				or UserInputService:IsGamepadButtonDown(Enum.UserInputType.Gamepad1, Enum.KeyCode.ButtonR2)
+		end)
+
+		return HeldDown
 	end
 
-	local Current = Kind == "Stomp" and Active.CurrentAction or Active.CurrentM1
+	local function ReportHit(Action)
+		local Active = Modules.AttackState and Modules.AttackState.Active
+		local Combat = Modules.Combat
+		local Character = LocalPlayer.Character
 
-	if Current ~= Action then
-		return
-	end
-
-	local Model = NearestTarget(ConnectRange)
-
-	if not Model then
-		return
-	end
-
-	local TargetPart = Model:FindFirstChild("UpperTorso")
-		or Model:FindFirstChild("Torso")
-		or Model:FindFirstChild("HumanoidRootPart")
-
-	if not TargetPart then
-		return
-	end
-
-	local Limb = ClosestLimb(Character, Kind == "Stomp" and FOOT_PARTS or HAND_PARTS, TargetPart.Position)
-	local Seq = Active.Seq
-
-	if type(Seq) ~= "number" or not Limb then
-		return
-	end
-
-	pcall(function()
-		Combat.HitReport:Fire(Seq, TargetPart, Limb.Position)
-	end)
-end
-
-local ActionTokens = { Attack = 0, Stomp = 0 }
-
-local function OnAction(Action, Kind)
-	ActionTokens[Kind] += 1
-
-	local Mine = ActionTokens[Kind]
-	local Fired = false
-	local Marker = nil
-
-	local function Fire()
-		if Fired or Mine ~= ActionTokens[Kind] then
+		if not ConnectOn or not Active or not Combat or not Character or not IsAlive() then
 			return
 		end
 
-		Fired = true
-
-		if Marker then
-			Marker:Disconnect()
-			Marker = nil
+		if Active.CurrentM1 ~= Action then
+			return
 		end
 
-		task.spawn(ReportHit, Action, Kind)
-	end
+		local StillPlaying = false
 
-	pcall(function()
-		Marker = Action:GetMarkerReachedSignal("Start"):Connect(Fire)
-	end)
-
-	task.delay(0.1, Fire)
-end
-
-local LastM1 = nil
-local LastM1Time = 0
-
-Conn(RunService.Heartbeat:Connect(function()
-	if not ConnectOn then
-		LastM1 = nil
-		return
-	end
-
-	if not EnsureModules() then
-		return
-	end
-
-	local Active = Modules.AttackState.Active
-	local M1 = Active and Active.CurrentM1
-
-	if not M1 then
-		LastM1 = nil
-		return
-	end
-
-	local Playing = false
-	local TimePos = 0
-
-	pcall(function()
-		Playing = M1.IsPlaying
-		TimePos = M1.TimePosition
-	end)
-
-	local Restarted = Playing and M1 == LastM1 and TimePos + 0.02 < LastM1Time
-	LastM1Time = TimePos
-
-	if Playing and (M1 ~= LastM1 or Restarted) then
-		LastM1 = M1
-		OnAction(M1, "Attack")
-	elseif not Playing then
-		LastM1 = nil
-	end
-end))
-
-local function SetAutoConnect(State)
-	ConnectOn = State
-	LastM1 = nil
-
-	if State then
-		task.spawn(LoadModules)
-	end
-end
-
--- hitbox
-local HitboxOn = false
-local HITBOX_RANGE = 7
-local HITBOX_TRANSPARENCY = 0.7
-local HitboxTracked = {}
-local HitboxLastSync = 0
-
-local function RestoreHitbox(Root)
-	local Data = HitboxTracked[Root]
-
-	if not Data then
-		return
-	end
-
-	HitboxTracked[Root] = nil
-
-	for _, C in ipairs(Data.Conns) do
-		C:Disconnect()
-	end
-
-	if Root.Parent then
 		pcall(function()
-			Root.Size = Data.Size
-			Root.Transparency = Data.Transparency
-			Root.Color = Data.Color
-			Root.Material = Data.Material
-			Root.CanCollide = Data.CanCollide
+			StillPlaying = Action.IsPlaying
+		end)
+
+		if not StillPlaying then
+			return
+		end
+
+		local Model = NearestTarget(ConnectRange)
+
+		if not Model then
+			return
+		end
+
+		local TargetPart = Model:FindFirstChild("UpperTorso")
+			or Model:FindFirstChild("Torso")
+			or Model:FindFirstChild("HumanoidRootPart")
+
+		if not TargetPart then
+			return
+		end
+
+		local Limb = ClosestLimb(Character, HAND_PARTS, TargetPart.Position)
+		local Seq = Active.Seq
+
+		if type(Seq) ~= "number" or not Limb or LastConnectedSeq == Seq then
+			return
+		end
+
+		LastConnectedSeq = Seq
+
+		pcall(function()
+			Combat.HitReport:Fire(Seq, TargetPart, Limb.Position)
 		end)
 	end
-end
 
-local function ShapeHitbox(Root)
-	local Target = Vector3.new(HITBOX_RANGE, HITBOX_RANGE, HITBOX_RANGE)
+	local function OnAction(Action)
+		ActionToken = ActionToken + 1
 
-	if Root.Size ~= Target then
-		Root.Size = Target
+		local Mine = ActionToken
+		local Fired = false
+		local Marker = nil
+
+		local function Fire()
+			if Fired or Mine ~= ActionToken then
+				return
+			end
+
+			Fired = true
+
+			if Marker then
+				Marker:Disconnect()
+				Marker = nil
+			end
+
+			task.spawn(ReportHit, Action)
+		end
+
+		pcall(function()
+			Marker = Action:GetMarkerReachedSignal("Start"):Connect(Fire)
+		end)
+
+		task.delay(0.1, Fire)
 	end
 
-	Root.Transparency = HITBOX_TRANSPARENCY
-	Root.CanCollide = false
-end
+	local LastM1 = nil
+	local LastM1Time = 0
 
-local function TrackHitbox(Root)
-	if HitboxTracked[Root] then
-		return
+	Conn(RunService.Heartbeat:Connect(function()
+		if not ConnectOn then
+			LastM1 = nil
+			return
+		end
+
+		if not EnsureModules() then
+			return
+		end
+
+		if not AttackInputHooked and Modules.Input then
+			AttackInputHooked = true
+
+			pcall(function()
+				Modules.Input.Began:Connect(function(Action)
+					if Action == "Attack" then
+						LastAttackInputAt = os.clock()
+					end
+				end)
+			end)
+		end
+
+		local Active = Modules.AttackState.Active
+		local M1 = Active and Active.CurrentM1
+
+		if not M1 then
+			LastM1 = nil
+			return
+		end
+
+		local Playing = false
+		local TimePos = 0
+
+		pcall(function()
+			Playing = M1.IsPlaying
+			TimePos = M1.TimePosition
+		end)
+
+		local Restarted = Playing and M1 == LastM1 and TimePos + 0.02 < LastM1Time
+		LastM1Time = TimePos
+
+		if Playing and (M1 ~= LastM1 or Restarted) then
+			LastM1 = M1
+
+			if AttackInputRecent() then
+				OnAction(M1)
+			end
+		elseif not Playing then
+			LastM1 = nil
+		end
+	end))
+
+	local function SetAutoConnect(State)
+		ConnectOn = State
+		LastM1 = nil
+
+		if State then
+			task.spawn(LoadModules)
+		end
 	end
 
-	local Data = {
-		Size = Root.Size,
-		Transparency = Root.Transparency,
-		Color = Root.Color,
-		Material = Root.Material,
-		CanCollide = Root.CanCollide,
-		Conns = {},
+	local HitboxOn = false
+	local SmartOn = false
+	local HITBOX_RANGE = 7
+	local HITBOX_TRANSPARENCY = 0.7
+	local HitboxTracked = {}
+	local HitboxLastSync = 0
+	local DownedUntil = setmetatable({}, { __mode = "k" })
+	local DOWN_HOLD = 0.6
+
+	local DOWN_ATTRIBUTES = { "Ragdoll", "Ragdolled", "Knocked", "KnockedDown", "Downed", "Crit", "Crited", "Stunned" }
+
+	local DOWN_STATES = {
+		[Enum.HumanoidStateType.FallingDown] = true,
+		[Enum.HumanoidStateType.Ragdoll] = true,
+		[Enum.HumanoidStateType.Physics] = true,
+		[Enum.HumanoidStateType.PlatformStanding] = true,
+		[Enum.HumanoidStateType.Dead] = true,
 	}
 
-	HitboxTracked[Root] = Data
+	local function HitboxActive()
+		return HitboxOn or SmartOn
+	end
 
-	Root.Color = Color3.new(0, 0, 0)
-	Root.Material = Enum.Material.SmoothPlastic
+	local function IsDowned(Root)
+		local Model = Root.Parent
+		local Humanoid = Model and Model:FindFirstChildOfClass("Humanoid")
 
-	table.insert(Data.Conns, Root:GetPropertyChangedSignal("Size"):Connect(function()
-		if HitboxOn then
-			local Target = Vector3.new(HITBOX_RANGE, HITBOX_RANGE, HITBOX_RANGE)
+		if not Humanoid then
+			return false
+		end
 
-			if Root.Size ~= Target then
-				Root.Size = Target
+		local Now = os.clock()
+		local Down = false
+
+		local Ok, State = pcall(function()
+			return Humanoid:GetState()
+		end)
+
+		if Ok and DOWN_STATES[State] then
+			Down = true
+		end
+
+		if not Down and Humanoid.PlatformStand then
+			Down = true
+		end
+
+		if not Down then
+			for _, Name in ipairs(DOWN_ATTRIBUTES) do
+				if Model:GetAttribute(Name) == true or Humanoid:GetAttribute(Name) == true then
+					Down = true
+					break
+				end
+			end
+		end
+
+		if not Down and Root.CFrame.UpVector.Y < 0.55 then
+			Down = true
+		end
+
+		if Down then
+			DownedUntil[Root] = Now + DOWN_HOLD
+			return true
+		end
+
+		local Until = DownedUntil[Root]
+
+		return Until ~= nil and Now < Until
+	end
+
+	local function RestoreHitbox(Root)
+		local Data = HitboxTracked[Root]
+
+		if not Data then
+			return
+		end
+
+		HitboxTracked[Root] = nil
+
+		for _, C in ipairs(Data.Conns) do
+			C:Disconnect()
+		end
+
+		if Root.Parent then
+			pcall(function()
+				Root.Size = Data.Size
+				Root.Transparency = Data.Transparency
+				Root.Color = Data.Color
+				Root.Material = Data.Material
+				Root.CanCollide = Data.CanCollide
+			end)
+		end
+	end
+
+	local function ShapeHitbox(Root)
+		local Target = Vector3.new(HITBOX_RANGE, HITBOX_RANGE, HITBOX_RANGE)
+
+		if Root.Size ~= Target then
+			Root.Size = Target
+		end
+
+		Root.Transparency = HITBOX_TRANSPARENCY
+		Root.CanCollide = false
+	end
+
+	local function TrackHitbox(Root)
+		if HitboxTracked[Root] then
+			return
+		end
+
+		local Data = {
+			Size = Root.Size,
+			Transparency = Root.Transparency,
+			Color = Root.Color,
+			Material = Root.Material,
+			CanCollide = Root.CanCollide,
+			Conns = {},
+		}
+
+		HitboxTracked[Root] = Data
+
+		Root.Color = Color3.new(0, 0, 0)
+		Root.Material = Enum.Material.SmoothPlastic
+
+		table.insert(Data.Conns, Root:GetPropertyChangedSignal("Size"):Connect(function()
+			if HitboxActive() then
+				local Target = Vector3.new(HITBOX_RANGE, HITBOX_RANGE, HITBOX_RANGE)
+
+				if Root.Size ~= Target then
+					Root.Size = Target
+				end
+			end
+		end))
+
+		ShapeHitbox(Root)
+	end
+
+	local function GetHitboxTargets()
+		local List = {}
+		local Seen = {}
+		local MyCharacter = LocalPlayer.Character
+
+		local function Add(Model)
+			if not Model or Model == MyCharacter or not Model:IsA("Model") then
+				return
+			end
+
+			local Root = Model:FindFirstChild("HumanoidRootPart")
+
+			if Root and Root:IsA("BasePart") and not Seen[Root] and Model:FindFirstChildOfClass("Humanoid") then
+				Seen[Root] = true
+				List[#List + 1] = Root
+			end
+		end
+
+		for _, Player in ipairs(Players:GetPlayers()) do
+			if Player ~= LocalPlayer then
+				Add(Player.Character)
+			end
+		end
+
+		local Live = workspace:FindFirstChild("Live")
+
+		if Live then
+			for _, Child in ipairs(Live:GetChildren()) do
+				Add(Child)
+			end
+		end
+
+		for _, Child in ipairs(workspace:GetChildren()) do
+			Add(Child)
+		end
+
+		return List
+	end
+
+	local function SyncHitboxes()
+		local Present = {}
+
+		for _, Root in ipairs(GetHitboxTargets()) do
+			local Humanoid = Root.Parent and Root.Parent:FindFirstChildOfClass("Humanoid")
+
+			if Humanoid and Humanoid.Health > 0 and not (SmartOn and IsDowned(Root)) then
+				Present[Root] = true
+				TrackHitbox(Root)
+			end
+		end
+
+		for Root in pairs(HitboxTracked) do
+			if not Present[Root] or not Root.Parent then
+				RestoreHitbox(Root)
+			end
+		end
+	end
+
+	local function RestoreAllHitboxes()
+		for Root in pairs(HitboxTracked) do
+			RestoreHitbox(Root)
+		end
+	end
+
+	local ReachTable = nil
+	local ReachOriginal = {}
+	local ReachSearched = false
+
+	local function FindReach()
+		if ReachSearched then
+			return ReachTable
+		end
+
+		ReachSearched = true
+
+		pcall(function()
+			for _, Inst in ipairs(ReplicatedStorage:GetDescendants()) do
+				if Inst:IsA("ModuleScript") and Inst.Name == "Config" then
+					local Ok, Result = pcall(require, Inst)
+
+					if Ok and type(Result) == "table" and type(Result.Combat) == "table" and type(Result.Combat.Reach) == "table" then
+						ReachTable = Result.Combat.Reach
+
+						for Key, Value in pairs(ReachTable) do
+							if type(Value) == "number" then
+								ReachOriginal[Key] = Value
+							end
+						end
+
+						return
+					end
+				end
+			end
+		end)
+
+		return ReachTable
+	end
+
+	local function ApplyReach()
+		local Reach = FindReach()
+
+		if not Reach then
+			return
+		end
+
+		local Factor = math.max(HITBOX_RANGE / (ReachOriginal.Bare or 7), 1)
+
+		pcall(function()
+			for Key, Value in pairs(ReachOriginal) do
+				Reach[Key] = Value * Factor
+			end
+		end)
+	end
+
+	local function RestoreReach()
+		if not ReachTable then
+			return
+		end
+
+		pcall(function()
+			for Key, Value in pairs(ReachOriginal) do
+				ReachTable[Key] = Value
+			end
+		end)
+	end
+
+	Conn(RunService.Stepped:Connect(function()
+		if not HitboxActive() then
+			return
+		end
+
+		local Now = os.clock()
+
+		if Now - HitboxLastSync >= 0.25 then
+			HitboxLastSync = Now
+			SyncHitboxes()
+		end
+
+		for Root in pairs(HitboxTracked) do
+			if Root.Parent then
+				if SmartOn and IsDowned(Root) then
+					RestoreHitbox(Root)
+				else
+					ShapeHitbox(Root)
+				end
 			end
 		end
 	end))
 
-	ShapeHitbox(Root)
-end
-
-local function GetHitboxTargets()
-	local List = {}
-	local Seen = {}
-	local MyCharacter = LocalPlayer.Character
-
-	local function Add(Model)
-		if not Model or Model == MyCharacter or not Model:IsA("Model") then
-			return
-		end
-
-		local Root = Model:FindFirstChild("HumanoidRootPart")
-
-		if Root and Root:IsA("BasePart") and not Seen[Root] and Model:FindFirstChildOfClass("Humanoid") then
-			Seen[Root] = true
-			List[#List + 1] = Root
+	local function RefreshHitbox()
+		if HitboxActive() then
+			SyncHitboxes()
+			ApplyReach()
+		else
+			RestoreAllHitboxes()
+			RestoreReach()
 		end
 	end
 
-	for _, Player in ipairs(Players:GetPlayers()) do
-		if Player ~= LocalPlayer then
-			Add(Player.Character)
-		end
+	local function SetHitbox(State)
+		HitboxOn = State
+		RefreshHitbox()
 	end
 
-	local Live = workspace:FindFirstChild("Live")
-
-	if Live then
-		for _, Child in ipairs(Live:GetChildren()) do
-			Add(Child)
-		end
+	local function SetSmartHitbox(State)
+		SmartOn = State
+		RefreshHitbox()
 	end
 
-	for _, Child in ipairs(workspace:GetChildren()) do
-		Add(Child)
-	end
+	local function SetHitboxRange(Value)
+		HITBOX_RANGE = Value
 
-	return List
-end
-
-local function SyncHitboxes()
-	local Present = {}
-
-	for _, Root in ipairs(GetHitboxTargets()) do
-		local Humanoid = Root.Parent and Root.Parent:FindFirstChildOfClass("Humanoid")
-
-		if Humanoid and Humanoid.Health > 0 then
-			Present[Root] = true
-			TrackHitbox(Root)
-		end
-	end
-
-	for Root in pairs(HitboxTracked) do
-		if not Present[Root] or not Root.Parent then
-			RestoreHitbox(Root)
-		end
-	end
-end
-
-local function RestoreAllHitboxes()
-	for Root in pairs(HitboxTracked) do
-		RestoreHitbox(Root)
-	end
-end
-
-local ReachTable = nil
-local ReachOriginal = {}
-local ReachSearched = false
-
-local function FindReach()
-	if ReachSearched then
-		return ReachTable
-	end
-
-	ReachSearched = true
-
-	pcall(function()
-		for _, Inst in ipairs(ReplicatedStorage:GetDescendants()) do
-			if Inst:IsA("ModuleScript") and Inst.Name == "Config" then
-				local Ok, Result = pcall(require, Inst)
-
-				if Ok and type(Result) == "table" and type(Result.Combat) == "table" and type(Result.Combat.Reach) == "table" then
-					ReachTable = Result.Combat.Reach
-
-					for Key, Value in pairs(ReachTable) do
-						if type(Value) == "number" then
-							ReachOriginal[Key] = Value
-						end
-					end
-
-					return
+		if HitboxActive() then
+			for Root in pairs(HitboxTracked) do
+				if Root.Parent then
+					ShapeHitbox(Root)
 				end
 			end
-		end
-	end)
 
-	return ReachTable
-end
-
-local function ApplyReach()
-	local Reach = FindReach()
-
-	if not Reach then
-		return
-	end
-
-	local Factor = math.max(HITBOX_RANGE / (ReachOriginal.Bare or 7), 1)
-
-	pcall(function()
-		for Key, Value in pairs(ReachOriginal) do
-			Reach[Key] = Value * Factor
-		end
-	end)
-end
-
-local function RestoreReach()
-	if not ReachTable then
-		return
-	end
-
-	pcall(function()
-		for Key, Value in pairs(ReachOriginal) do
-			ReachTable[Key] = Value
-		end
-	end)
-end
-
-Conn(RunService.Stepped:Connect(function()
-	if not HitboxOn then
-		return
-	end
-
-	local Now = os.clock()
-
-	if Now - HitboxLastSync >= 0.25 then
-		HitboxLastSync = Now
-		SyncHitboxes()
-	end
-
-	for Root in pairs(HitboxTracked) do
-		if Root.Parent then
-			ShapeHitbox(Root)
+			ApplyReach()
 		end
 	end
-end))
 
-local function SetHitbox(State)
-	HitboxOn = State
+	local function SetHitboxTransparency(Value)
+		HITBOX_TRANSPARENCY = Value
 
-	if State then
-		SyncHitboxes()
-		ApplyReach()
-	else
-		RestoreAllHitboxes()
-		RestoreReach()
-	end
-end
-
-local function SetHitboxRange(Value)
-	HITBOX_RANGE = Value
-
-	if HitboxOn then
 		for Root in pairs(HitboxTracked) do
 			if Root.Parent then
-				ShapeHitbox(Root)
+				Root.Transparency = Value
 			end
 		end
-
-		ApplyReach()
 	end
-end
 
-local function SetHitboxTransparency(Value)
-	HITBOX_TRANSPARENCY = Value
+	OnCleanup(function()
+		ConnectOn = false
+		HitboxOn = false
+		SmartOn = false
+		RestoreAllHitboxes()
+		RestoreReach()
+	end)
 
-	for Root in pairs(HitboxTracked) do
-		if Root.Parent then
-			Root.Transparency = Value
-		end
+	F.SetAutoConnect = SetAutoConnect
+	F.SetConnectRange = function(Value)
+		ConnectRange = Value
 	end
-end
-
-OnCleanup(function()
-	ConnectOn = false
-	HitboxOn = false
-	RestoreAllHitboxes()
-	RestoreReach()
+	F.SetSmartHitbox = SetSmartHitbox
+	F.SetHitbox = SetHitbox
+	F.SetHitboxRange = SetHitboxRange
+	F.SetHitboxTransparency = SetHitboxTransparency
 end)
 
 ------------------------------------------------------------------
--- DELAYS: no punch delay / no stomp delay (+ stomp watcher for auto connect)
+-- Block 2: Delays + Speed
 ------------------------------------------------------------------
-local NoPunchOn = false
-local NoStompOn = false
-local PunchGap = 0.1
-local StompGap = 0
-local LastCanAttack = true
-local LockStartedAt = 0
-local LastStomping = false
-local StompStartedAt = 0
+Block("Combat (delays/speed)", function()
+	local NoPunchOn = false
+	local NoStompOn = false
+	local PunchGap = 0.1
+	local StompGap = 0
+	local LastCanAttack = true
+	local LockStartedAt = 0
+	local LastStomping = false
+	local StompStartedAt = 0
 
-Conn(RunService.Heartbeat:Connect(function()
-	if not NoPunchOn and not NoStompOn and not ConnectOn then
-		LastCanAttack = true
-		LastStomping = false
-		return
+	Conn(RunService.Heartbeat:Connect(function()
+		if not NoPunchOn and not NoStompOn then
+			LastCanAttack = true
+			LastStomping = false
+			return
+		end
+
+		if not EnsureModules() then
+			return
+		end
+
+		local Now = os.clock()
+
+		pcall(function()
+			local Active = Modules.AttackState.Active
+
+			if not Active then
+				return
+			end
+
+			if NoPunchOn then
+				local CanAttack = Active.CanAttack
+
+				if CanAttack == false and LastCanAttack ~= false then
+					LockStartedAt = Now
+				end
+
+				LastCanAttack = CanAttack
+
+				if CanAttack == false and IsAlive() and Now - LockStartedAt >= PunchGap then
+					Active.CanAttack = true
+					LastCanAttack = true
+				end
+			end
+
+			local Stomping = Active.Stomping == true
+			local Started = Stomping and not LastStomping
+			LastStomping = Stomping
+
+			if Started and Active.CurrentKind == "Stomp" then
+				StompStartedAt = Now
+			end
+
+			if NoStompOn and Active.CurrentKind == "Stomp" and Now - StompStartedAt >= StompGap then
+				local Track = Active.CurrentAction
+
+				if Track and Track.IsPlaying then
+					Active.CanAttack = true
+					Active.Stomping = false
+				end
+			end
+		end)
+	end))
+
+	local function SetNoPunchDelay(State)
+		NoPunchOn = State
+
+		if State then
+			task.spawn(LoadModules)
+		end
 	end
 
-	if not EnsureModules() then
-		return
+	local function SetNoStompDelay(State)
+		NoStompOn = State
+
+		if State then
+			task.spawn(LoadModules)
+		end
 	end
 
-	local Now = os.clock()
+	local AntiStunOn = false
+	local BaseSpeeds = setmetatable({}, { __mode = "k" })
 
-	pcall(function()
+	Conn(RunService.Heartbeat:Connect(function()
+		if not AntiStunOn then
+			return
+		end
+
+		if not EnsureModules() then
+			return
+		end
+
 		local Active = Modules.AttackState.Active
+		local M1 = Active and Active.CurrentM1
 
-		if not Active then
+		if not M1 then
 			return
 		end
 
-		if NoPunchOn then
-			local CanAttack = Active.CanAttack
-
-			if CanAttack == false and LastCanAttack ~= false then
-				LockStartedAt = Now
+		pcall(function()
+			if not M1.IsPlaying then
+				return
 			end
 
-			LastCanAttack = CanAttack
+			local Speed = M1.Speed
 
-			if CanAttack == false and IsAlive() and Now - LockStartedAt >= PunchGap then
-				Active.CanAttack = true
-				LastCanAttack = true
+			if BaseSpeeds[M1] == nil and Speed > 0.2 then
+				BaseSpeeds[M1] = Speed
+			end
+
+			if Speed > 0 and Speed <= 0.1 then
+				M1:AdjustSpeed(BaseSpeeds[M1] or 1)
+			end
+		end)
+	end))
+
+	local function SetAntiStun(State)
+		AntiStunOn = State
+
+		if State then
+			task.spawn(LoadModules)
+		end
+	end
+
+	local PunchSpeed = 1.7
+	local StompSpeed = 1
+
+	local PUNCH_IDS = {
+		"18312333191", "18312335714", "18312338197", "18312340119",
+		"17819438450", "17819441388", "17819444004", "17819446225",
+	}
+
+	local STOMP_IDS = { "18362264385", "17837722603" }
+
+	local TrackKinds = setmetatable({}, { __mode = "k" })
+
+	local function HasAnimId(Track, Ids)
+		local Animation = Track.Animation
+
+		if not Animation then
+			return false
+		end
+
+		local AnimId = tostring(Animation.AnimationId)
+
+		for _, Id in ipairs(Ids) do
+			if string.find(AnimId, Id, 1, true) then
+				return true
 			end
 		end
 
-		local Stomping = Active.Stomping == true
-		local Started = Stomping and not LastStomping
-		LastStomping = Stomping
-
-		if Started and Active.CurrentKind == "Stomp" and Active.CurrentAction then
-			StompStartedAt = Now
-
-			if ConnectOn then
-				OnAction(Active.CurrentAction, "Stomp")
-			end
-		end
-
-		if NoStompOn and Active.CurrentKind == "Stomp" and Now - StompStartedAt >= StompGap then
-			local Track = Active.CurrentAction
-
-			if Track and Track.IsPlaying then
-				Active.CanAttack = true
-				Active.Stomping = false
-			end
-		end
-	end)
-end))
-
-local function SetNoPunchDelay(State)
-	NoPunchOn = State
-
-	if State then
-		task.spawn(LoadModules)
-	end
-end
-
-local function SetNoStompDelay(State)
-	NoStompOn = State
-
-	if State then
-		task.spawn(LoadModules)
-	end
-end
-
-------------------------------------------------------------------
--- ANTI STUN
-------------------------------------------------------------------
-local AntiStunOn = false
-local BaseSpeeds = setmetatable({}, { __mode = "k" })
-
-Conn(RunService.Heartbeat:Connect(function()
-	if not AntiStunOn then
-		return
-	end
-
-	if not EnsureModules() then
-		return
-	end
-
-	local Active = Modules.AttackState.Active
-	local M1 = Active and Active.CurrentM1
-
-	if not M1 then
-		return
-	end
-
-	pcall(function()
-		if not M1.IsPlaying then
-			return
-		end
-
-		local Speed = M1.Speed
-
-		if BaseSpeeds[M1] == nil and Speed > 0.2 then
-			BaseSpeeds[M1] = Speed
-		end
-
-		if Speed > 0 and Speed <= 0.1 then
-			M1:AdjustSpeed(BaseSpeeds[M1] or 1)
-		end
-	end)
-end))
-
-local function SetAntiStun(State)
-	AntiStunOn = State
-
-	if State then
-		task.spawn(LoadModules)
-	end
-end
-
-------------------------------------------------------------------
--- SPEED: punch / stomp animation speed
-------------------------------------------------------------------
-local PunchSpeed = 1.7
-local StompSpeed = 1
-
-local PUNCH_IDS = {
-	"18312333191", "18312335714", "18312338197", "18312340119",
-	"17819438450", "17819441388", "17819444004", "17819446225",
-}
-
-local STOMP_IDS = { "18362264385", "17837722603" }
-
-local TrackKinds = setmetatable({}, { __mode = "k" })
-
-local function HasAnimId(Track, Ids)
-	local Animation = Track.Animation
-
-	if not Animation then
 		return false
 	end
 
-	local AnimId = tostring(Animation.AnimationId)
+	local function KindOf(Track)
+		local Cached = TrackKinds[Track]
 
-	for _, Id in ipairs(Ids) do
-		if string.find(AnimId, Id, 1, true) then
-			return true
+		if Cached ~= nil then
+			return Cached
 		end
+
+		local Kind = false
+
+		if HasAnimId(Track, PUNCH_IDS) then
+			Kind = "punch"
+		elseif HasAnimId(Track, STOMP_IDS) then
+			Kind = "stomp"
+		end
+
+		TrackKinds[Track] = Kind
+
+		return Kind
 	end
 
-	return false
-end
+	Conn(RunService.Heartbeat:Connect(function()
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+		local Animator = Humanoid and Humanoid:FindFirstChildOfClass("Animator")
 
-local function KindOf(Track)
-	local Cached = TrackKinds[Track]
+		if not Animator then
+			return
+		end
 
-	if Cached ~= nil then
-		return Cached
-	end
+		for _, Track in ipairs(Animator:GetPlayingAnimationTracks()) do
+			local Kind = KindOf(Track)
 
-	local Kind = false
+			if Kind then
+				local Wanted = Kind == "punch" and PunchSpeed or StompSpeed
 
-	if HasAnimId(Track, PUNCH_IDS) then
-		Kind = "punch"
-	elseif HasAnimId(Track, STOMP_IDS) then
-		Kind = "stomp"
-	end
+				if Kind == "punch" or Wanted > 1 then
+					local Speed = Track.Speed
 
-	TrackKinds[Track] = Kind
-
-	return Kind
-end
-
-Conn(RunService.Heartbeat:Connect(function()
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-	local Animator = Humanoid and Humanoid:FindFirstChildOfClass("Animator")
-
-	if not Animator then
-		return
-	end
-
-	for _, Track in ipairs(Animator:GetPlayingAnimationTracks()) do
-		local Kind = KindOf(Track)
-
-		if Kind then
-			local Wanted = Kind == "punch" and PunchSpeed or StompSpeed
-
-			if Kind == "punch" or Wanted > 1 then
-				local Speed = Track.Speed
-
-				if Speed > 0.1 and math.abs(Speed - Wanted) > 0.02 then
-					pcall(function()
-						Track:AdjustSpeed(Wanted)
-					end)
+					if Speed > 0.1 and math.abs(Speed - Wanted) > 0.02 then
+						pcall(function()
+							Track:AdjustSpeed(Wanted)
+						end)
+					end
 				end
 			end
 		end
+	end))
+
+	F.SetNoPunchDelay = SetNoPunchDelay
+	F.SetNoStompDelay = SetNoStompDelay
+	F.SetAntiStun = SetAntiStun
+	F.SetPunchGap = function(Value)
+		PunchGap = Value
 	end
-end))
+	F.SetStompGap = function(Value)
+		StompGap = Value
+	end
+	F.SetPunchSpeed = function(Value)
+		PunchSpeed = Value
+	end
+	F.SetStompSpeed = function(Value)
+		StompSpeed = Value
+	end
+end)
 
 ------------------------------------------------------------------
--- WEAVE (movement tab)
+-- Block 3: Weave Mac + Glide + Slide + Walk Speed
 ------------------------------------------------------------------
-local WeaveOn = false
-local GlideOn = false
-local GlideDistance = 2.2
-local Linger = 0.4
-local WalkOn = false
-local WalkDefault = 11
-local WalkSetting = 11
+Block("Movement (weave)", function()
+	local WeaveOn = false
+	local GlideOn = false
+	local GlideDistance = 2.2
+	local Linger = 0.4
+	local WalkOn = false
+	local WalkDefault = 11
+	local WalkSetting = 11
 
-local SlideOn = false
-local SlideSpeed = 10
+	local SlideOn = false
+	local SlideSpeed = 10
 
-local ANIM_SPEED = 0.9
-local FLIP_P = 0.27
-local MIN_SPACING = 0.2
-local RECOVER_AFTER = 0.05
-local RECOVER_SPACING = 0.22
-local FAST_SPACING = 0.10
+	local ANIM_SPEED = 0.9
+	local FLIP_P = 0.27
+	local MIN_SPACING = 0.2
+	local RECOVER_AFTER = 0.05
+	local RECOVER_SPACING = 0.22
+	local FAST_SPACING = 0.10
 
-local Held = { Space = false, L2 = false, Game = false }
-local Weaving = false
-local SignalOn = false
-local LingerUntil = nil
-local LastFire = 0
-local PunchFlipAt = nil
-local LastCanAttackPoll = true
-local LastDashDirection = nil
-local DashBlockedUntil = 0
-local OwnTrack = nil
-local OwnDirection = nil
-local OwnLooped = false
-local WeaveBlocked = false
-local SpaceBound = false
-local OriginalWeave = {}
-local FramesOn = false
-local OffSince = nil
-local FramesConn = nil
-local ToolConn = nil
-local InputHooked = false
-local LockedSpeed = nil
-local MomentumCleared = false
-local TrackCache = { Character = nil, Style = nil, Weave = nil }
+	local Held = { Space = false, L2 = false, Game = false }
+	local Weaving = false
+	local SignalOn = false
+	local LingerUntil = nil
+	local LastFire = 0
+	local PunchFlipAt = nil
+	local LastCanAttackPoll = true
+	local LastDashDirection = nil
+	local DashBlockedUntil = 0
+	local OwnTrack = nil
+	local OwnDirection = nil
+	local OwnLooped = false
+	local WeaveBlocked = false
+	local SpaceBound = false
+	local OriginalWeave = {}
+	local FramesOn = false
+	local OffSince = nil
+	local FramesConn = nil
+	local ToolConn = nil
+	local InputHooked = false
+	local LockedSpeed = nil
+	local MomentumCleared = false
+	local TrackCache = { Character = nil, Style = nil, Weave = nil }
 
-local Offsets = {
-	Front = CFrame.new(0, 0, -2.2),
-	Back = CFrame.new(0, 0, 2.2),
-	Right = CFrame.new(2.2, 0, 0),
-	Left = CFrame.new(-2.2, 0, 0),
-}
+	local Offsets = {
+		Front = CFrame.new(0, 0, -2.2),
+		Back = CFrame.new(0, 0, 2.2),
+		Right = CFrame.new(2.2, 0, 0),
+		Left = CFrame.new(-2.2, 0, 0),
+	}
 
-local function SpaceHeld()
-	return Held.Space or Held.L2 or Held.Game
-end
-
-local function ClearHeld()
-	Held.Space = false
-	Held.L2 = false
-	Held.Game = false
-end
-
-local function WalkCustom()
-	return WalkOn and math.abs(WalkSetting - WalkDefault) > 0.01
-end
-
-local function RestoreWalkSpeed()
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-
-	if Humanoid and not Weaving then
-		Humanoid.WalkSpeed = WalkDefault
+	local function SpaceHeld()
+		return Held.Space or Held.L2 or Held.Game
 	end
-end
 
-local function GetWeaveTracks()
-	local AttackState = Modules.AttackState
-	local Character = LocalPlayer.Character
+	local function ClearHeld()
+		Held.Space = false
+		Held.L2 = false
+		Held.Game = false
+	end
 
-	if not AttackState or not Character then
+	local function WalkCustom()
+		return WalkOn and math.abs(WalkSetting - WalkDefault) > 0.01
+	end
+
+	local function RestoreWalkSpeed()
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+
+		if Humanoid and not Weaving then
+			Humanoid.WalkSpeed = WalkDefault
+		end
+	end
+
+	local function GetWeaveTracks()
+		local AttackState = Modules.AttackState
+		local Character = LocalPlayer.Character
+
+		if not AttackState or not Character then
+			return nil
+		end
+
+		local Style
+		pcall(function()
+			Style = AttackState.StyleName()
+		end)
+
+		if TrackCache.Weave and TrackCache.Character == Character and TrackCache.Style == Style then
+			return TrackCache.Weave
+		end
+
+		local Weave
+		pcall(function()
+			local Set = AttackState.StyleSet()
+			Weave = Set and Set.Weave
+		end)
+
+		TrackCache.Character = Character
+		TrackCache.Style = Style
+		TrackCache.Weave = Weave
+
+		return Weave
+	end
+
+	local function CurrentDirection()
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if not Humanoid or not Root then
+			return nil
+		end
+
+		local Move = Humanoid.MoveDirection
+
+		if Move.Magnitude <= 0 then
+			return nil
+		end
+
+		local Forward = Move:Dot(Root.CFrame.LookVector)
+		local Side = Move:Dot(Root.CFrame.RightVector)
+
+		if Forward >= 0.5 then
+			return "Front", Root
+		elseif Forward <= -0.5 then
+			return "Back", Root
+		elseif Side >= 0.9 then
+			return "Right", Root
+		elseif Side <= -0.9 then
+			return "Left", Root
+		end
+
 		return nil
 	end
 
-	local Style
-	pcall(function()
-		Style = AttackState.StyleName()
-	end)
+	local function StopOwnTrack()
+		if OwnTrack then
+			local Track = OwnTrack
 
-	if TrackCache.Weave and TrackCache.Character == Character and TrackCache.Style == Style then
-		return TrackCache.Weave
+			pcall(function()
+				Track.Looped = OwnLooped
+
+				if Track.IsPlaying then
+					Track:Stop()
+				end
+			end)
+		end
+
+		OwnTrack = nil
+		OwnDirection = nil
 	end
 
-	local Weave
-	pcall(function()
-		local Set = AttackState.StyleSet()
-		Weave = Set and Set.Weave
-	end)
+	local function Dash(Root, Direction)
+		if not GlideOn then
+			return
+		end
 
-	TrackCache.Character = Character
-	TrackCache.Style = Style
-	TrackCache.Weave = Weave
+		local Now = os.clock()
 
-	return Weave
-end
+		if Now < DashBlockedUntil or LastDashDirection == Direction then
+			return
+		end
 
-local function CurrentDirection()
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-	local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+		local Existing = Root:FindFirstChildOfClass("BodyPosition")
 
-	if not Humanoid or not Root then
-		return nil
+		if Existing then
+			Existing:Destroy()
+			return
+		end
+
+		LastDashDirection = Direction
+		DashBlockedUntil = Now + 0.3
+
+		local Way = (Root.CFrame * Offsets[Direction]).Position - Root.Position
+
+		if Way.Magnitude <= 0 then
+			return
+		end
+
+		local Target = Root.Position + Way.Unit * GlideDistance
+		local Made = false
+
+		if Modules.Movers then
+			Made = pcall(function()
+				Modules.Movers.Create("BodyPosition", "WeaveMove", {
+					MaxForce = Vector3.new(30000, 0, 30000),
+					P = 220,
+					D = 0,
+					Position = Target,
+				}, Root, 0.1)
+			end)
+		end
+
+		if not Made then
+			local Mover = Instance.new("BodyPosition")
+			Mover.Name = "WeaveMove"
+			Mover.MaxForce = Vector3.new(30000, 0, 30000)
+			Mover.P = 220
+			Mover.D = 0
+			Mover.Position = Target
+			Mover.Parent = Root
+
+			task.delay(0.1, function()
+				if Mover.Parent then
+					Mover:Destroy()
+				end
+			end)
+		end
 	end
 
-	local Move = Humanoid.MoveDirection
+	local function UpdateWeave()
+		local Direction, Root = CurrentDirection()
 
-	if Move.Magnitude <= 0 then
-		return nil
+		if not Direction then
+			StopOwnTrack()
+			return
+		end
+
+		local Tracks = GetWeaveTracks()
+		local Track = Tracks and Tracks[Direction]
+
+		if not Track then
+			return
+		end
+
+		if OwnTrack == Track and Track.IsPlaying then
+			pcall(function()
+				if math.abs(Track.Speed - ANIM_SPEED) > 0.01 then
+					Track:AdjustSpeed(ANIM_SPEED)
+				end
+			end)
+
+			return
+		end
+
+		if OwnTrack and OwnTrack ~= Track then
+			StopOwnTrack()
+		end
+
+		if OwnTrack ~= Track then
+			OwnLooped = Track.Looped
+			OwnTrack = Track
+		end
+
+		Track.Looped = true
+		Track:Play(0.1, 1, ANIM_SPEED)
+
+		if OwnDirection ~= Direction then
+			OwnDirection = Direction
+			Dash(Root, Direction)
+		end
 	end
 
-	local Forward = Move:Dot(Root.CFrame.LookVector)
-	local Side = Move:Dot(Root.CFrame.RightVector)
+	local function FireWeave(State)
+		local Combat = Modules.Combat
 
-	if Forward >= 0.5 then
-		return "Front", Root
-	elseif Forward <= -0.5 then
-		return "Back", Root
-	elseif Side >= 0.9 then
-		return "Right", Root
-	elseif Side <= -0.9 then
-		return "Left", Root
-	end
-
-	return nil
-end
-
-local function StopOwnTrack()
-	if OwnTrack then
-		local Track = OwnTrack
+		if not Combat then
+			return
+		end
 
 		pcall(function()
-			Track.Looped = OwnLooped
-
-			if Track.IsPlaying then
-				Track:Stop()
-			end
-		end)
-	end
-
-	OwnTrack = nil
-	OwnDirection = nil
-end
-
-local function Dash(Root, Direction)
-	if not GlideOn then
-		return
-	end
-
-	local Now = os.clock()
-
-	if Now < DashBlockedUntil or LastDashDirection == Direction then
-		return
-	end
-
-	local Existing = Root:FindFirstChildOfClass("BodyPosition")
-
-	if Existing then
-		Existing:Destroy()
-		return
-	end
-
-	LastDashDirection = Direction
-	DashBlockedUntil = Now + 0.3
-
-	local Way = (Root.CFrame * Offsets[Direction]).Position - Root.Position
-
-	if Way.Magnitude <= 0 then
-		return
-	end
-
-	local Target = Root.Position + Way.Unit * GlideDistance
-	local Made = false
-
-	if Modules.Movers then
-		Made = pcall(function()
-			Modules.Movers.Create("BodyPosition", "WeaveMove", {
-				MaxForce = Vector3.new(30000, 0, 30000),
-				P = 220,
-				D = 0,
-				Position = Target,
-			}, Root, 0.1)
-		end)
-	end
-
-	if not Made then
-		local Mover = Instance.new("BodyPosition")
-		Mover.Name = "WeaveMove"
-		Mover.MaxForce = Vector3.new(30000, 0, 30000)
-		Mover.P = 220
-		Mover.D = 0
-		Mover.Position = Target
-		Mover.Parent = Root
-
-		task.delay(0.1, function()
-			if Mover.Parent then
-				Mover:Destroy()
-			end
-		end)
-	end
-end
-
-local function UpdateWeave()
-	local Direction, Root = CurrentDirection()
-
-	if not Direction then
-		StopOwnTrack()
-		return
-	end
-
-	local Tracks = GetWeaveTracks()
-	local Track = Tracks and Tracks[Direction]
-
-	if not Track then
-		return
-	end
-
-	if OwnTrack == Track and Track.IsPlaying then
-		pcall(function()
-			if math.abs(Track.Speed - ANIM_SPEED) > 0.01 then
-				Track:AdjustSpeed(ANIM_SPEED)
-			end
+			Combat.Weave:Fire(State)
 		end)
 
-		return
+		if State then
+			LastFire = os.clock()
+		end
 	end
 
-	if OwnTrack and OwnTrack ~= Track then
-		StopOwnTrack()
-	end
-
-	if OwnTrack ~= Track then
-		OwnLooped = Track.Looped
-		OwnTrack = Track
-	end
-
-	Track.Looped = true
-	Track:Play(0.1, 1, ANIM_SPEED)
-
-	if OwnDirection ~= Direction then
-		OwnDirection = Direction
-		Dash(Root, Direction)
-	end
-end
-
-local function FireWeave(State)
-	local Combat = Modules.Combat
-
-	if not Combat then
-		return
-	end
-
-	pcall(function()
-		Combat.Weave:Fire(State)
-	end)
-
-	if State then
-		LastFire = os.clock()
-	end
-end
-
-local function FireFlip()
-	FireWeave(false)
-	FireWeave(true)
-end
-
-local function StopWeave()
-	Weaving = false
-	LastDashDirection = nil
-	LingerUntil = nil
-
-	if SignalOn then
-		SignalOn = false
+	local function FireFlip()
 		FireWeave(false)
+		FireWeave(true)
 	end
 
-	StopOwnTrack()
-end
-
-local function Tick()
-	if not WeaveOn or not Modules.Combat then
-		return
-	end
-
-	local Now = os.clock()
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-	local Alive = Humanoid ~= nil and Humanoid.Health > 0
-
-	if not Alive then
-		Weaving = false
-		SignalOn = false
-		LingerUntil = nil
-		StopOwnTrack()
-		return
-	end
-
-	if not HasFight() then
-		if SpaceHeld() or Weaving or SignalOn then
-			ClearHeld()
-			StopWeave()
-		end
-
-		return
-	end
-
-	local CanAttackNow = true
-
-	pcall(function()
-		CanAttackNow = Modules.AttackState.Active.CanAttack ~= false
-	end)
-
-	if CanAttackNow and not LastCanAttackPoll then
-		PunchFlipAt = Now
-	end
-
-	LastCanAttackPoll = CanAttackNow
-
-	local Moving = Humanoid.MoveDirection.Magnitude > 0.05
-	local WantWeave = SpaceHeld() and Moving
-
-	if WantWeave then
-		if not Weaving then
-			Weaving = true
-			LastDashDirection = nil
-		end
-
-		if not SignalOn then
-			PunchFlipAt = nil
-		end
-
-		SignalOn = true
-		LingerUntil = nil
-
-		UpdateWeave()
-	elseif Weaving then
+	local function StopWeave()
 		Weaving = false
 		LastDashDirection = nil
-		StopOwnTrack()
+		LingerUntil = nil
 
 		if SignalOn then
-			LingerUntil = Now + Linger
+			SignalOn = false
+			FireWeave(false)
 		end
+
+		StopOwnTrack()
 	end
 
-	if SignalOn then
-		if not WantWeave and LingerUntil and Now >= LingerUntil then
+	local function Tick()
+		if not WeaveOn or not Modules.Combat then
+			return
+		end
+
+		local Now = os.clock()
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+		local Alive = Humanoid ~= nil and Humanoid.Health > 0
+
+		if not Alive then
+			Weaving = false
 			SignalOn = false
 			LingerUntil = nil
-			FireWeave(false)
-		else
-			local Gap = Now - LastFire
-			local Send = Gap >= math.max(FLIP_P, MIN_SPACING)
-
-			if not Send and PunchFlipAt and Now >= PunchFlipAt and Gap >= FAST_SPACING then
-				PunchFlipAt = nil
-				Send = true
-			end
-
-			if not Send and not FramesOn and OffSince and Now - OffSince >= RECOVER_AFTER and Gap >= RECOVER_SPACING then
-				Send = true
-			end
-
-			if Send then
-				FireFlip()
-			end
-		end
-	end
-end
-
-local function BlockGameWeave()
-	if WeaveBlocked or SpaceBound or not Modules.Weave then
-		return
-	end
-
-	local W = Modules.Weave
-	local Ok = pcall(function()
-		OriginalWeave.Set = W.Set
-		OriginalWeave.Play = W.Play
-		OriginalWeave.StopTrack = W.StopTrack
-		OriginalWeave.Reset = W.Reset
-
-		W.Set = function() end
-		W.Play = function() end
-		W.StopTrack = function() end
-		W.Reset = function() end
-	end)
-
-	if Ok and W.Set ~= OriginalWeave.Set then
-		WeaveBlocked = true
-
-		if Modules.AttackState and Modules.AttackState.Active then
-			Modules.AttackState.Active.Weaving = false
-		end
-	else
-		pcall(function()
-			W.Set = OriginalWeave.Set or W.Set
-			W.Play = OriginalWeave.Play or W.Play
-			W.StopTrack = OriginalWeave.StopTrack or W.StopTrack
-			W.Reset = OriginalWeave.Reset or W.Reset
-		end)
-
-		SpaceBound = true
-
-		ContextActionService:BindActionAtPriority(
-			"JellyBlockSpace",
-			function()
-				return Enum.ContextActionResult.Sink
-			end,
-			false,
-			Enum.ContextActionPriority.High.Value + 1,
-			Enum.KeyCode.Space
-		)
-	end
-end
-
-local function UnblockGameWeave()
-	if WeaveBlocked and Modules.Weave then
-		pcall(function()
-			Modules.Weave.Set = OriginalWeave.Set
-			Modules.Weave.Play = OriginalWeave.Play
-			Modules.Weave.StopTrack = OriginalWeave.StopTrack
-			Modules.Weave.Reset = OriginalWeave.Reset
-		end)
-	end
-
-	WeaveBlocked = false
-
-	if SpaceBound then
-		SpaceBound = false
-		ContextActionService:UnbindAction("JellyBlockSpace")
-	end
-end
-
-local function HookGameInput()
-	if InputHooked or not Modules.Input then
-		return
-	end
-
-	InputHooked = true
-
-	pcall(function()
-		Modules.Input.Began:Connect(function(Action)
-			if Action == "Weave" and WeaveOn and HasFight() then
-				Held.Game = true
-				Tick()
-			end
-		end)
-
-		Modules.Input.Ended:Connect(function(Action)
-			if Action == "Weave" then
-				Held.Game = false
-				Tick()
-			end
-		end)
-	end)
-end
-
-local function EnforceNoSlide()
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-
-	if not Humanoid then
-		LockedSpeed = nil
-		return
-	end
-
-	local Running = WeaveOn and Weaving and HasFight() and not SlideOn
-
-	if Running then
-		if not LockedSpeed and Humanoid.WalkSpeed > 0 then
-			LockedSpeed = Humanoid.WalkSpeed
-		end
-
-		if LockedSpeed and Humanoid.WalkSpeed ~= 0 then
-			Humanoid.WalkSpeed = 0
-		end
-
-		if not MomentumCleared then
-			MomentumCleared = true
-
-			local Root = Character:FindFirstChild("HumanoidRootPart")
-
-			if Root then
-				local Velocity = Root.AssemblyLinearVelocity
-				Root.AssemblyLinearVelocity = Vector3.new(0, Velocity.Y, 0)
-			end
-		end
-	else
-		MomentumCleared = false
-
-		if LockedSpeed then
-			if Humanoid.WalkSpeed == 0 then
-				Humanoid.WalkSpeed = WalkCustom() and WalkSetting or LockedSpeed
-			end
-
-			LockedSpeed = nil
-		end
-	end
-end
-
-local function WatchFrames(Character)
-	if FramesConn then
-		FramesConn:Disconnect()
-		FramesConn = nil
-	end
-
-	FramesOn = false
-	OffSince = os.clock()
-
-	if not Character then
-		return
-	end
-
-	FramesOn = Character:GetAttribute("WeaveFrames") == true
-	OffSince = (not FramesOn) and os.clock() or nil
-
-	FramesConn = Character:GetAttributeChangedSignal("WeaveFrames"):Connect(function()
-		FramesOn = Character:GetAttribute("WeaveFrames") == true
-
-		if FramesOn then
-			OffSince = nil
-		elseif not OffSince then
-			OffSince = os.clock()
-		end
-	end)
-end
-
-local function WatchTools(Character)
-	if ToolConn then
-		ToolConn:Disconnect()
-		ToolConn = nil
-	end
-
-	if not Character then
-		return
-	end
-
-	ToolConn = Character.ChildRemoved:Connect(function(Child)
-		if Child.Name == "Fight" and WeaveOn then
-			ClearHeld()
-			StopWeave()
-		end
-	end)
-end
-
-pcall(function()
-	RunService:UnbindFromRenderStep("JellyNoSlide")
-end)
-
-RunService:BindToRenderStep("JellyNoSlide", Enum.RenderPriority.Last.Value, EnforceNoSlide)
-Conn(RunService.Heartbeat:Connect(EnforceNoSlide))
-
-Conn(RunService.RenderStepped:Connect(function()
-	if not WalkCustom() or Weaving then
-		return
-	end
-
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-
-	if Humanoid and Humanoid.Health > 0 and Humanoid.WalkSpeed ~= WalkSetting then
-		Humanoid.WalkSpeed = WalkSetting
-	end
-end))
-
-if LocalPlayer.Character then
-	WatchFrames(LocalPlayer.Character)
-	WatchTools(LocalPlayer.Character)
-end
-
-Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
-	WatchFrames(Character)
-	WatchTools(Character)
-
-	TrackCache.Weave = nil
-	OwnTrack = nil
-	OwnDirection = nil
-	LastDashDirection = nil
-
-	Held.Space = UserInputService:IsKeyDown(Enum.KeyCode.Space)
-	Held.L2 = false
-	Held.Game = false
-end))
-
-Conn(UserInputService.InputBegan:Connect(function(Input)
-	if not WeaveOn then
-		return
-	end
-
-	if Input.KeyCode == Enum.KeyCode.Space then
-		if UserInputService:GetFocusedTextBox() or not HasFight() then
+			StopOwnTrack()
 			return
 		end
 
-		Held.Space = true
-		Tick()
-	elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then
 		if not HasFight() then
+			if SpaceHeld() or Weaving or SignalOn then
+				ClearHeld()
+				StopWeave()
+			end
+
 			return
 		end
 
-		Held.L2 = true
-		Tick()
-	end
-end))
+		local CanAttackNow = true
 
-Conn(UserInputService.InputEnded:Connect(function(Input)
-	if Input.KeyCode == Enum.KeyCode.Space then
-		Held.Space = false
-		Tick()
-	elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then
-		Held.L2 = false
-		Tick()
-	end
-end))
-
-Conn(UserInputService.WindowFocusReleased:Connect(ClearHeld))
-
-Conn(RunService.Heartbeat:Connect(Tick))
-
-local function SetWeave(State)
-	WeaveOn = State
-
-	if State then
-		task.spawn(function()
-			if LoadModules() and WeaveOn then
-				BlockGameWeave()
-			end
-
-			HookGameInput()
+		pcall(function()
+			CanAttackNow = Modules.AttackState.Active.CanAttack ~= false
 		end)
-	else
-		ClearHeld()
-		StopWeave()
-		UnblockGameWeave()
-	end
-end
 
-local function SetGlide(State)
-	GlideOn = State
-end
+		if CanAttackNow and not LastCanAttackPoll then
+			PunchFlipAt = Now
+		end
 
-local function SetGlideDistance(Value)
-	GlideDistance = Value
-end
+		LastCanAttackPoll = CanAttackNow
 
-local function SetWalk(State)
-	local WasCustom = WalkCustom()
-	WalkOn = State
+		local Moving = Humanoid.MoveDirection.Magnitude > 0.05
+		local WantWeave = SpaceHeld() and Moving
 
-	if WasCustom and not WalkCustom() then
-		RestoreWalkSpeed()
-	end
-end
+		if WantWeave then
+			if not Weaving then
+				Weaving = true
+				LastDashDirection = nil
+			end
 
-local function SetWalkValue(Value)
-	local WasCustom = WalkCustom()
-	WalkSetting = Value
+			if not SignalOn then
+				PunchFlipAt = nil
+			end
 
-	if WasCustom and not WalkCustom() then
-		RestoreWalkSpeed()
-	end
-end
+			SignalOn = true
+			LingerUntil = nil
 
-------------------------------------------------------------------
--- WEAVE SLIDE: keeps your speed capped while weaving
-------------------------------------------------------------------
-local SLIDE_IDS = {
-	"18312351760", "18312346524", "18312348771", "18312344029",
-	"17819695187", "17819683172", "17819691229", "17819688197",
-}
+			UpdateWeave()
+		elseif Weaving then
+			Weaving = false
+			LastDashDirection = nil
+			StopOwnTrack()
 
-local SlideHumanoid = nil
-local SlideRoot = nil
-local SlideAnimator = nil
-local SlideWasWeaving = false
-local SlideFallback = 11
+			if SignalOn then
+				LingerUntil = Now + Linger
+			end
+		end
 
-local function SlideIsWeaving()
-	if Weaving then
-		return true
-	end
+		if SignalOn then
+			if not WantWeave and LingerUntil and Now >= LingerUntil then
+				SignalOn = false
+				LingerUntil = nil
+				FireWeave(false)
+			else
+				local Gap = Now - LastFire
+				local Send = Gap >= math.max(FLIP_P, MIN_SPACING)
 
-	if not SlideAnimator then
-		return false
-	end
+				if not Send and PunchFlipAt and Now >= PunchFlipAt and Gap >= FAST_SPACING then
+					PunchFlipAt = nil
+					Send = true
+				end
 
-	for _, Track in ipairs(SlideAnimator:GetPlayingAnimationTracks()) do
-		if Track.IsPlaying and Track.Animation then
-			local AnimId = tostring(Track.Animation.AnimationId)
+				if not Send and not FramesOn and OffSince and Now - OffSince >= RECOVER_AFTER and Gap >= RECOVER_SPACING then
+					Send = true
+				end
 
-			for _, Id in ipairs(SLIDE_IDS) do
-				if string.find(AnimId, Id, 1, true) then
-					return true
+				if Send then
+					FireFlip()
 				end
 			end
 		end
 	end
 
-	return false
-end
+	local function BlockGameWeave()
+		if WeaveBlocked or SpaceBound or not Modules.Weave then
+			return
+		end
 
-local function BindSlide(Character)
-	SlideHumanoid = nil
-	SlideRoot = nil
-	SlideAnimator = nil
-	SlideWasWeaving = false
+		local W = Modules.Weave
+		local Ok = pcall(function()
+			OriginalWeave.Set = W.Set
+			OriginalWeave.Play = W.Play
+			OriginalWeave.StopTrack = W.StopTrack
+			OriginalWeave.Reset = W.Reset
 
-	if not Character then
-		return
+			W.Set = function() end
+			W.Play = function() end
+			W.StopTrack = function() end
+			W.Reset = function() end
+		end)
+
+		if Ok and W.Set ~= OriginalWeave.Set then
+			WeaveBlocked = true
+
+			if Modules.AttackState and Modules.AttackState.Active then
+				Modules.AttackState.Active.Weaving = false
+			end
+		else
+			pcall(function()
+				W.Set = OriginalWeave.Set or W.Set
+				W.Play = OriginalWeave.Play or W.Play
+				W.StopTrack = OriginalWeave.StopTrack or W.StopTrack
+				W.Reset = OriginalWeave.Reset or W.Reset
+			end)
+
+			SpaceBound = true
+
+			ContextActionService:BindActionAtPriority(
+				"JellyBlockSpace",
+				function()
+					return Enum.ContextActionResult.Sink
+				end,
+				false,
+				Enum.ContextActionPriority.High.Value + 1,
+				Enum.KeyCode.Space
+			)
+		end
 	end
 
-	local Humanoid = Character:WaitForChild("Humanoid", 5)
-	local Root = Character:WaitForChild("HumanoidRootPart", 5)
+	local function UnblockGameWeave()
+		if WeaveBlocked and Modules.Weave then
+			pcall(function()
+				Modules.Weave.Set = OriginalWeave.Set
+				Modules.Weave.Play = OriginalWeave.Play
+				Modules.Weave.StopTrack = OriginalWeave.StopTrack
+				Modules.Weave.Reset = OriginalWeave.Reset
+			end)
+		end
 
-	if not Humanoid or not Root then
-		return
+		WeaveBlocked = false
+
+		if SpaceBound then
+			SpaceBound = false
+			ContextActionService:UnbindAction("JellyBlockSpace")
+		end
 	end
 
-	SlideHumanoid = Humanoid
-	SlideRoot = Root
-	SlideAnimator = Humanoid:FindFirstChildOfClass("Animator") or Humanoid:WaitForChild("Animator", 5)
-end
+	local function HookGameInput()
+		if InputHooked or not Modules.Input then
+			return
+		end
 
-if LocalPlayer.Character then
-	task.spawn(BindSlide, LocalPlayer.Character)
-end
+		InputHooked = true
 
-Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
-	task.spawn(BindSlide, Character)
-end))
+		pcall(function()
+			Modules.Input.Began:Connect(function(Action)
+				if Action == "Weave" and WeaveOn and HasFight() then
+					Held.Game = true
+					Tick()
+				end
+			end)
 
-Conn(RunService.RenderStepped:Connect(function()
-	if not SlideOn or not SlideHumanoid or SlideHumanoid.Health <= 0 then
-		SlideWasWeaving = false
-		return
+			Modules.Input.Ended:Connect(function(Action)
+				if Action == "Weave" then
+					Held.Game = false
+					Tick()
+				end
+			end)
+		end)
 	end
 
-	if SlideIsWeaving() then
-		SlideWasWeaving = true
-		SlideHumanoid.WalkSpeed = SlideSpeed
-		SlideHumanoid.AutoRotate = true
+	local function EnforceNoSlide()
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
 
-		if SlideRoot then
-			for _, Child in ipairs(SlideRoot:GetChildren()) do
-				if Child:IsA("LinearVelocity") or Child:IsA("BodyVelocity")
-					or Child:IsA("VectorForce") or Child:IsA("BodyThrust") then
-					Child:Destroy()
+		if not Humanoid then
+			LockedSpeed = nil
+			return
+		end
+
+		local Running = WeaveOn and Weaving and HasFight() and not SlideOn
+
+		if Running then
+			if not LockedSpeed and Humanoid.WalkSpeed > 0 then
+				LockedSpeed = Humanoid.WalkSpeed
+			end
+
+			if LockedSpeed and Humanoid.WalkSpeed ~= 0 then
+				Humanoid.WalkSpeed = 0
+			end
+
+			if not MomentumCleared then
+				MomentumCleared = true
+
+				local Root = Character:FindFirstChild("HumanoidRootPart")
+
+				if Root then
+					local Velocity = Root.AssemblyLinearVelocity
+					Root.AssemblyLinearVelocity = Vector3.new(0, Velocity.Y, 0)
 				end
 			end
+		else
+			MomentumCleared = false
 
-			local Velocity = SlideRoot.AssemblyLinearVelocity
-			local Horizontal = Vector3.new(Velocity.X, 0, Velocity.Z)
-			local MaxSpeed = SlideSpeed + 1
+			if LockedSpeed then
+				if Humanoid.WalkSpeed == 0 then
+					Humanoid.WalkSpeed = WalkCustom() and WalkSetting or LockedSpeed
+				end
 
-			if Horizontal.Magnitude > MaxSpeed then
-				local Capped = Horizontal.Unit * MaxSpeed
-				SlideRoot.AssemblyLinearVelocity = Vector3.new(Capped.X, Velocity.Y, Capped.Z)
+				LockedSpeed = nil
 			end
 		end
-	elseif SlideWasWeaving then
-		SlideWasWeaving = false
-		SlideHumanoid.WalkSpeed = WalkCustom() and WalkSetting or SlideFallback
-		SlideHumanoid.AutoRotate = true
-	end
-end))
-
-local function SetSlide(State)
-	SlideOn = State
-
-	if not State and SlideWasWeaving and SlideHumanoid then
-		SlideWasWeaving = false
-		SlideHumanoid.WalkSpeed = WalkCustom() and WalkSetting or SlideFallback
-	end
-end
-
-local function SetSlideSpeed(Value)
-	SlideSpeed = Value
-end
-
-OnCleanup(function()
-	WeaveOn = false
-	GlideOn = false
-	SlideOn = false
-	StopWeave()
-	UnblockGameWeave()
-
-	if FramesConn then
-		FramesConn:Disconnect()
 	end
 
-	if ToolConn then
-		ToolConn:Disconnect()
+	local function WatchFrames(Character)
+		if FramesConn then
+			FramesConn:Disconnect()
+			FramesConn = nil
+		end
+
+		FramesOn = false
+		OffSince = os.clock()
+
+		if not Character then
+			return
+		end
+
+		FramesOn = Character:GetAttribute("WeaveFrames") == true
+		OffSince = (not FramesOn) and os.clock() or nil
+
+		FramesConn = Character:GetAttributeChangedSignal("WeaveFrames"):Connect(function()
+			FramesOn = Character:GetAttribute("WeaveFrames") == true
+
+			if FramesOn then
+				OffSince = nil
+			elseif not OffSince then
+				OffSince = os.clock()
+			end
+		end)
+	end
+
+	local function WatchTools(Character)
+		if ToolConn then
+			ToolConn:Disconnect()
+			ToolConn = nil
+		end
+
+		if not Character then
+			return
+		end
+
+		ToolConn = Character.ChildRemoved:Connect(function(Child)
+			if Child.Name == "Fight" and WeaveOn then
+				ClearHeld()
+				StopWeave()
+			end
+		end)
 	end
 
 	pcall(function()
 		RunService:UnbindFromRenderStep("JellyNoSlide")
 	end)
-end)
 
-------------------------------------------------------------------
--- VISUAL: anti bounce, headless, accessories, boost fps
-------------------------------------------------------------------
-local AntiBounceOn = false
-local OriginalGravity = workspace.Gravity
-local BounceUntil = 0
-local BounceStateConn = nil
+	RunService:BindToRenderStep("JellyNoSlide", Enum.RenderPriority.Last.Value, EnforceNoSlide)
+	Conn(RunService.Heartbeat:Connect(EnforceNoSlide))
 
-local function BindBounceHumanoid(Character)
-	if BounceStateConn then
-		BounceStateConn:Disconnect()
-		BounceStateConn = nil
-	end
-
-	local Humanoid = Character and Character:WaitForChild("Humanoid", 5)
-
-	if not Humanoid then
-		return
-	end
-
-	BounceStateConn = Humanoid.StateChanged:Connect(function(_, New)
-		if New == Enum.HumanoidStateType.Landed then
-			BounceUntil = os.clock() + 0.25
-		elseif New == Enum.HumanoidStateType.Jumping then
-			BounceUntil = 0
-		end
-	end)
-end
-
-if LocalPlayer.Character then
-	task.spawn(BindBounceHumanoid, LocalPlayer.Character)
-end
-
-Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
-	task.spawn(BindBounceHumanoid, Character)
-end))
-
-Conn(RunService.Heartbeat:Connect(function()
-	if not AntiBounceOn then
-		return
-	end
-
-	if workspace.Gravity ~= 700 then
-		workspace.Gravity = 700
-	end
-
-	if os.clock() >= BounceUntil then
-		return
-	end
-
-	local Character = LocalPlayer.Character
-	local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
-	local Root = Character and Character:FindFirstChild("HumanoidRootPart")
-
-	if not Humanoid or not Root then
-		return
-	end
-
-	if Humanoid.FloorMaterial ~= Enum.Material.Air then
-		local Velocity = Root.AssemblyLinearVelocity
-
-		if Velocity.Y > 0 then
-			Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, 0, Velocity.Z)
-		end
-	end
-end))
-
-local function SetAntiBounce(State)
-	AntiBounceOn = State
-
-	if State then
-		OriginalGravity = workspace.Gravity
-		workspace.Gravity = 700
-	else
-		workspace.Gravity = OriginalGravity
-		BounceUntil = 0
-	end
-end
-
--- headless + accessories
-local HeadlessOn = false
-local HeadOriginal = setmetatable({}, { __mode = "k" })
-
-local function ApplyHeadless()
-	local Character = LocalPlayer.Character
-	local Head = Character and Character:FindFirstChild("Head")
-
-	if not Head then
-		return
-	end
-
-	if HeadlessOn then
-		if HeadOriginal[Head] == nil then
-			HeadOriginal[Head] = Head.Transparency
+	Conn(RunService.RenderStepped:Connect(function()
+		if not WalkCustom() or Weaving then
+			return
 		end
 
-		Head.Transparency = 1
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
 
-		for _, Child in ipairs(Head:GetChildren()) do
-			if Child:IsA("Decal") then
-				if HeadOriginal[Child] == nil then
-					HeadOriginal[Child] = Child.Transparency
-				end
-
-				Child.Transparency = 1
-			end
-		end
-	else
-		for Inst, Value in pairs(HeadOriginal) do
-			if Inst.Parent then
-				Inst.Transparency = Value
-			end
-		end
-
-		table.clear(HeadOriginal)
-	end
-end
-
-Conn(RunService.Heartbeat:Connect(function()
-	if HeadlessOn then
-		ApplyHeadless()
-	end
-end))
-
-local function SetHeadless(State)
-	HeadlessOn = State
-	ApplyHeadless()
-end
-
-local Show = { Head = true, Hair = true, Face = true, Neck = true }
-local AccessoryOriginal = setmetatable({}, { __mode = "k" })
-
-local function CategoryOf(Accessory)
-	local Type
-
-	pcall(function()
-		Type = Accessory.AccessoryType
-	end)
-
-	if Type == Enum.AccessoryType.Hat then
-		return "Head"
-	elseif Type == Enum.AccessoryType.Hair then
-		return "Hair"
-	elseif Type == Enum.AccessoryType.Face then
-		return "Face"
-	elseif Type == Enum.AccessoryType.Neck then
-		return "Neck"
-	end
-
-	local Handle = Accessory:FindFirstChild("Handle")
-
-	if Handle then
-		if Handle:FindFirstChild("HairAttachment") then
-			return "Hair"
-		elseif Handle:FindFirstChild("HatAttachment") then
-			return "Head"
-		elseif Handle:FindFirstChild("FaceFrontAttachment") or Handle:FindFirstChild("FaceCenterAttachment") then
-			return "Face"
-		elseif Handle:FindFirstChild("NeckAttachment") then
-			return "Neck"
-		end
-	end
-
-	return nil
-end
-
-local function SetAccessoryVisible(Accessory, Visible)
-	for _, Part in ipairs(Accessory:GetDescendants()) do
-		if Part:IsA("BasePart") then
-			if Visible then
-				local Original = AccessoryOriginal[Part]
-
-				if Original ~= nil then
-					Part.Transparency = Original
-					AccessoryOriginal[Part] = nil
-				end
-			else
-				if AccessoryOriginal[Part] == nil then
-					AccessoryOriginal[Part] = Part.Transparency
-				end
-
-				Part.Transparency = 1
-			end
-		end
-	end
-end
-
-local function ApplyAccessories()
-	local Character = LocalPlayer.Character
-
-	if not Character then
-		return
-	end
-
-	for _, Child in ipairs(Character:GetChildren()) do
-		if Child:IsA("Accessory") then
-			local Category = CategoryOf(Child)
-
-			if Category then
-				SetAccessoryVisible(Child, Show[Category])
-			end
-		end
-	end
-end
-
-local function WatchAccessories(Character)
-	Conn(Character.ChildAdded:Connect(function(Child)
-		if Child:IsA("Accessory") then
-			Child:WaitForChild("Handle", 3)
-			task.wait()
-
-			local Category = CategoryOf(Child)
-
-			if Category and not Show[Category] then
-				SetAccessoryVisible(Child, false)
-			end
-		end
-	end))
-end
-
-if LocalPlayer.Character then
-	WatchAccessories(LocalPlayer.Character)
-end
-
-Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
-	WatchAccessories(Character)
-
-	task.wait(1)
-	ApplyAccessories()
-end))
-
-local function SetAccessoryShown(Name, State)
-	Show[Name] = State
-	ApplyAccessories()
-end
-
-OnCleanup(function()
-	HeadlessOn = false
-	ApplyHeadless()
-
-	if BounceStateConn then
-		BounceStateConn:Disconnect()
-	end
-end)
-
--- boost fps
-local BoostOn = false
-local BoostOriginal = setmetatable({}, { __mode = "k" })
-local SavedQuality = nil
-local BoostConns = {}
-
-local function SetProp(Inst, Prop, Value)
-	pcall(function()
-		local Saved = BoostOriginal[Inst]
-
-		if not Saved then
-			Saved = {}
-			BoostOriginal[Inst] = Saved
-		end
-
-		if Saved[Prop] == nil then
-			Saved[Prop] = Inst[Prop]
-		end
-
-		Inst[Prop] = Value
-	end)
-end
-
-local function InCharacter(Inst)
-	local Model = Inst:FindFirstAncestorOfClass("Model")
-	return Model ~= nil and Model:FindFirstChildOfClass("Humanoid") ~= nil
-end
-
-local function ReduceInstance(Inst)
-	if Inst:IsA("Terrain") then
-		return
-	end
-
-	if Inst:IsA("BasePart") then
-		SetProp(Inst, "Material", Enum.Material.SmoothPlastic)
-		SetProp(Inst, "Reflectance", 0)
-		SetProp(Inst, "CastShadow", false)
-	elseif Inst:IsA("ParticleEmitter") or Inst:IsA("Trail") or Inst:IsA("Smoke")
-		or Inst:IsA("Fire") or Inst:IsA("Sparkles") or Inst:IsA("PostEffect") or Inst:IsA("Clouds") then
-		SetProp(Inst, "Enabled", false)
-	elseif Inst:IsA("Decal") then
-		if not InCharacter(Inst) then
-			SetProp(Inst, "Transparency", 1)
-		end
-	elseif Inst:IsA("Atmosphere") then
-		SetProp(Inst, "Density", 0)
-		SetProp(Inst, "Haze", 0)
-	end
-end
-
-local function EnableBoost()
-	pcall(function()
-		SavedQuality = settings().Rendering.QualityLevel
-		settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-	end)
-
-	SetProp(Lighting, "GlobalShadows", false)
-	SetProp(Lighting, "ShadowSoftness", 0)
-	SetProp(Lighting, "EnvironmentDiffuseScale", 0)
-	SetProp(Lighting, "EnvironmentSpecularScale", 0)
-
-	local Terrain = workspace:FindFirstChildOfClass("Terrain")
-
-	if Terrain then
-		SetProp(Terrain, "WaterWaveSize", 0)
-		SetProp(Terrain, "WaterWaveSpeed", 0)
-		SetProp(Terrain, "WaterReflectance", 0)
-		SetProp(Terrain, "Decoration", false)
-	end
-
-	for _, Inst in ipairs(Lighting:GetDescendants()) do
-		ReduceInstance(Inst)
-	end
-
-	table.insert(BoostConns, Lighting.DescendantAdded:Connect(function(Inst)
-		if BoostOn then
-			ReduceInstance(Inst)
+		if Humanoid and Humanoid.Health > 0 and Humanoid.WalkSpeed ~= WalkSetting then
+			Humanoid.WalkSpeed = WalkSetting
 		end
 	end))
 
-	table.insert(BoostConns, workspace.DescendantAdded:Connect(function(Inst)
-		if BoostOn then
-			ReduceInstance(Inst)
-		end
+	if LocalPlayer.Character then
+		WatchFrames(LocalPlayer.Character)
+		WatchTools(LocalPlayer.Character)
+	end
+
+	Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+		WatchFrames(Character)
+		WatchTools(Character)
+
+		TrackCache.Weave = nil
+		OwnTrack = nil
+		OwnDirection = nil
+		LastDashDirection = nil
+
+		Held.Space = UserInputService:IsKeyDown(Enum.KeyCode.Space)
+		Held.L2 = false
+		Held.Game = false
 	end))
 
-	task.spawn(function()
-		local Count = 0
+	Conn(UserInputService.InputBegan:Connect(function(Input)
+		if not WeaveOn then
+			return
+		end
 
-		for _, Inst in ipairs(workspace:GetDescendants()) do
-			if not BoostOn then
+		if Input.KeyCode == Enum.KeyCode.Space then
+			if UserInputService:GetFocusedTextBox() or not HasFight() then
 				return
 			end
 
-			ReduceInstance(Inst)
-			Count += 1
-
-			if Count % 400 == 0 then
-				task.wait()
+			Held.Space = true
+			Tick()
+		elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then
+			if not HasFight() then
+				return
 			end
-		end
-	end)
-end
 
-local function DisableBoost()
-	for _, C in ipairs(BoostConns) do
-		C:Disconnect()
+			Held.L2 = true
+			Tick()
+		end
+	end))
+
+	Conn(UserInputService.InputEnded:Connect(function(Input)
+		if Input.KeyCode == Enum.KeyCode.Space then
+			Held.Space = false
+			Tick()
+		elseif Input.KeyCode == Enum.KeyCode.ButtonL2 then
+			Held.L2 = false
+			Tick()
+		end
+	end))
+
+	Conn(UserInputService.WindowFocusReleased:Connect(ClearHeld))
+
+	Conn(RunService.Heartbeat:Connect(Tick))
+
+	local function SetWeave(State)
+		if State and F.WeaveV2Control and F.WeaveV2Control:Get() then
+			F.WeaveV2Control:Set(false)
+		end
+
+		WeaveOn = State
+
+		if State then
+			task.spawn(function()
+				if LoadModules() and WeaveOn then
+					BlockGameWeave()
+				end
+
+				HookGameInput()
+			end)
+		else
+			ClearHeld()
+			StopWeave()
+			UnblockGameWeave()
+		end
 	end
 
-	table.clear(BoostConns)
+	local function SetGlide(State)
+		GlideOn = State
+	end
 
-	for Inst, Props in pairs(BoostOriginal) do
-		for Prop, Value in pairs(Props) do
+	local function SetGlideDistance(Value)
+		GlideDistance = Value
+	end
+
+	local function SetWalk(State)
+		local WasCustom = WalkCustom()
+		WalkOn = State
+
+		if WasCustom and not WalkCustom() then
+			RestoreWalkSpeed()
+		end
+	end
+
+	local function SetWalkValue(Value)
+		local WasCustom = WalkCustom()
+		WalkSetting = Value
+
+		if WasCustom and not WalkCustom() then
+			RestoreWalkSpeed()
+		end
+	end
+
+	local SLIDE_IDS = {
+		"18312351760", "18312346524", "18312348771", "18312344029",
+		"17819695187", "17819683172", "17819691229", "17819688197",
+	}
+
+	local SlideHumanoid = nil
+	local SlideRoot = nil
+	local SlideAnimator = nil
+	local SlideWasWeaving = false
+	local SlideFallback = 11
+
+	local function SlideIsWeaving()
+		if Weaving then
+			return true
+		end
+
+		if not SlideAnimator then
+			return false
+		end
+
+		for _, Track in ipairs(SlideAnimator:GetPlayingAnimationTracks()) do
+			if Track.IsPlaying and Track.Animation then
+				local AnimId = tostring(Track.Animation.AnimationId)
+
+				for _, Id in ipairs(SLIDE_IDS) do
+					if string.find(AnimId, Id, 1, true) then
+						return true
+					end
+				end
+			end
+		end
+
+		return false
+	end
+
+	local function BindSlide(Character)
+		SlideHumanoid = nil
+		SlideRoot = nil
+		SlideAnimator = nil
+		SlideWasWeaving = false
+
+		if not Character then
+			return
+		end
+
+		local Humanoid = Character:WaitForChild("Humanoid", 5)
+		local Root = Character:WaitForChild("HumanoidRootPart", 5)
+
+		if not Humanoid or not Root then
+			return
+		end
+
+		SlideHumanoid = Humanoid
+		SlideRoot = Root
+		SlideAnimator = Humanoid:FindFirstChildOfClass("Animator") or Humanoid:WaitForChild("Animator", 5)
+	end
+
+	if LocalPlayer.Character then
+		task.spawn(BindSlide, LocalPlayer.Character)
+	end
+
+	Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+		task.spawn(BindSlide, Character)
+	end))
+
+	Conn(RunService.RenderStepped:Connect(function()
+		if not SlideOn or not SlideHumanoid or SlideHumanoid.Health <= 0 then
+			SlideWasWeaving = false
+			return
+		end
+
+		if SlideIsWeaving() then
+			SlideWasWeaving = true
+			SlideHumanoid.WalkSpeed = SlideSpeed
+			SlideHumanoid.AutoRotate = true
+
+			if SlideRoot then
+				for _, Child in ipairs(SlideRoot:GetChildren()) do
+					if Child:IsA("LinearVelocity") or Child:IsA("BodyVelocity")
+						or Child:IsA("VectorForce") or Child:IsA("BodyThrust") then
+						Child:Destroy()
+					end
+				end
+
+				local Velocity = SlideRoot.AssemblyLinearVelocity
+				local Horizontal = Vector3.new(Velocity.X, 0, Velocity.Z)
+				local MaxSpeed = SlideSpeed + 1
+
+				if Horizontal.Magnitude > MaxSpeed then
+					local Capped = Horizontal.Unit * MaxSpeed
+					SlideRoot.AssemblyLinearVelocity = Vector3.new(Capped.X, Velocity.Y, Capped.Z)
+				end
+			end
+		elseif SlideWasWeaving then
+			SlideWasWeaving = false
+			SlideHumanoid.WalkSpeed = WalkCustom() and WalkSetting or SlideFallback
+			SlideHumanoid.AutoRotate = true
+		end
+	end))
+
+	local function SetSlide(State)
+		SlideOn = State
+
+		if not State and SlideWasWeaving and SlideHumanoid then
+			SlideWasWeaving = false
+			SlideHumanoid.WalkSpeed = WalkCustom() and WalkSetting or SlideFallback
+		end
+	end
+
+	local function SetSlideSpeed(Value)
+		SlideSpeed = Value
+	end
+
+	OnCleanup(function()
+		WeaveOn = false
+		GlideOn = false
+		SlideOn = false
+		StopWeave()
+		UnblockGameWeave()
+
+		if FramesConn then
+			FramesConn:Disconnect()
+		end
+
+		if ToolConn then
+			ToolConn:Disconnect()
+		end
+
+		pcall(function()
+			RunService:UnbindFromRenderStep("JellyNoSlide")
+		end)
+	end)
+
+	F.SetWeave = SetWeave
+	F.SetGlide = SetGlide
+	F.SetGlideDistance = SetGlideDistance
+	F.SetWalk = SetWalk
+	F.SetWalkValue = SetWalkValue
+	F.SetSlide = SetSlide
+	F.SetSlideSpeed = SetSlideSpeed
+	F.SetLinger = function(Value)
+		Linger = Value
+	end
+	F.GetWeaveTracks = GetWeaveTracks
+	F.TrackCache = TrackCache
+	F.GetLinger = function()
+		return Linger
+	end
+end)
+
+------------------------------------------------------------------
+-- Block 4: Weave Mac V2
+-- Slide / direction / animation logic = Isaeva script.
+-- Weave signal = same auto weave as the top "Weave Mac" toggle (flip + linger),
+-- only active while you hold weave (Space / L2 / mobile weave button) and
+-- have activated it with a direction. Never fires just from holding fist.
+------------------------------------------------------------------
+Block("Movement (weave v2)", function()
+	local GetWeaveTracks = F.GetWeaveTracks
+	local TrackCache = F.TrackCache or {}
+
+	local V2 = { Enabled = false, Distance = 3.7, Duration = 0.28 }
+
+	local ANIM_SPEED = 1
+	local DIAG_SPEED = 18
+	local JITTER_STEP = 0.05
+	local JITTER_AMOUNT = 0.45
+	local JitterAt, JitterFlip = 0, false
+	local SLIDE_SMOOTH = 0.012
+	local Current = nil
+	local Desired = nil
+	local Stopped = false
+
+	-- weave signal timing (copied from the top Weave Mac toggle)
+	local FLIP_P = 0.27
+	local MIN_SPACING = 0.2
+	local RECOVER_AFTER = 0.05
+	local RECOVER_SPACING = 0.22
+	local FAST_SPACING = 0.10
+
+	local Blocked = false
+	local OrigSet, OrigPlay, OrigStop, OrigReset
+
+	local function Block2()
+		if Blocked or not Modules.Weave then
+			return
+		end
+
+		local W = Modules.Weave
+
+		local Ok = pcall(function()
+			OrigSet, OrigPlay, OrigStop, OrigReset = W.Set, W.Play, W.StopTrack, W.Reset
+			W.Set = function() end
+			W.Play = function() end
+			W.StopTrack = function() end
+			W.Reset = function() end
+		end)
+
+		if Ok and W.Set ~= OrigSet then
+			Blocked = true
+
+			if Modules.AttackState and Modules.AttackState.Active then
+				Modules.AttackState.Active.Weaving = false
+			end
+		else
 			pcall(function()
-				Inst[Prop] = Value
+				W.Set = OrigSet or W.Set
+				W.Play = OrigPlay or W.Play
+				W.StopTrack = OrigStop or W.StopTrack
+				W.Reset = OrigReset or W.Reset
 			end)
 		end
 	end
 
-	table.clear(BoostOriginal)
+	local function Unblock()
+		if Blocked and Modules.Weave then
+			pcall(function()
+				Modules.Weave.Set, Modules.Weave.Play, Modules.Weave.StopTrack, Modules.Weave.Reset = OrigSet, OrigPlay, OrigStop, OrigReset
+			end)
+		end
 
-	if SavedQuality then
+		Blocked = false
+	end
+
+	local OwnTrack, OwnLooped = nil, false
+	local SlideId = 0
+	local Sliding = false
+	local Holding = false
+	local SavedSpeed = nil
+	local ExtraTrack, ExtraLooped = nil, false
+
+	------------------------------------------------------------------
+	-- Weave signal (top-toggle logic)
+	------------------------------------------------------------------
+	local SignalOn = false
+	local LingerUntil = nil
+	local LastFire = 0
+	local PunchFlipAt = nil
+	local LastCanAttackPoll = true
+	local FramesOn = false
+	local OffSince = nil
+	local FramesConn = nil
+
+	local function FireWeave(State)
+		local Combat = Modules.Combat
+
+		if not Combat then
+			return
+		end
+
 		pcall(function()
-			settings().Rendering.QualityLevel = SavedQuality
+			Combat.Weave:Fire(State)
+		end)
+
+		if State then
+			LastFire = os.clock()
+		end
+	end
+
+	local function FireFlip()
+		FireWeave(false)
+		FireWeave(true)
+	end
+
+	local function GetLinger()
+		if F.GetLinger then
+			return F.GetLinger()
+		end
+
+		return 0.4
+	end
+
+	local function SignalStop()
+		LingerUntil = nil
+		PunchFlipAt = nil
+
+		if SignalOn then
+			SignalOn = false
+			FireWeave(false)
+		end
+	end
+
+	local function GetHumanoid()
+		local Character = LocalPlayer.Character
+		return Character and Character:FindFirstChildOfClass("Humanoid")
+	end
+
+	-- Want = you are currently in the weave state (holding weave and activated)
+	local function SignalStep(Want)
+		if not V2.Enabled or not Modules.Combat then
+			return
+		end
+
+		local Now = os.clock()
+		local Humanoid = GetHumanoid()
+
+		if not Humanoid or Humanoid.Health <= 0 then
+			SignalOn = false
+			LingerUntil = nil
+			return
+		end
+
+		if not HasFight() then
+			SignalStop()
+			return
+		end
+
+		local CanAttackNow = true
+
+		pcall(function()
+			CanAttackNow = Modules.AttackState.Active.CanAttack ~= false
+		end)
+
+		if CanAttackNow and not LastCanAttackPoll then
+			PunchFlipAt = Now
+		end
+
+		LastCanAttackPoll = CanAttackNow
+
+		if Want then
+			if not SignalOn then
+				PunchFlipAt = nil
+			end
+
+			SignalOn = true
+			LingerUntil = nil
+		elseif SignalOn and not LingerUntil then
+			LingerUntil = Now + GetLinger()
+		end
+
+		if not SignalOn then
+			return
+		end
+
+		if not Want and LingerUntil and Now >= LingerUntil then
+			SignalOn = false
+			LingerUntil = nil
+			FireWeave(false)
+			return
+		end
+
+		local Gap = Now - LastFire
+		local Send = Gap >= math.max(FLIP_P, MIN_SPACING)
+
+		if not Send and PunchFlipAt and Now >= PunchFlipAt and Gap >= FAST_SPACING then
+			PunchFlipAt = nil
+			Send = true
+		end
+
+		if not Send and not FramesOn and OffSince and Now - OffSince >= RECOVER_AFTER and Gap >= RECOVER_SPACING then
+			Send = true
+		end
+
+		if Send then
+			FireFlip()
+		end
+	end
+
+	local function WatchFrames(Character)
+		if FramesConn then
+			FramesConn:Disconnect()
+			FramesConn = nil
+		end
+
+		FramesOn = false
+		OffSince = os.clock()
+
+		if not Character then
+			return
+		end
+
+		FramesOn = Character:GetAttribute("WeaveFrames") == true
+		OffSince = (not FramesOn) and os.clock() or nil
+
+		FramesConn = Character:GetAttributeChangedSignal("WeaveFrames"):Connect(function()
+			FramesOn = Character:GetAttribute("WeaveFrames") == true
+
+			if FramesOn then
+				OffSince = nil
+			elseif not OffSince then
+				OffSince = os.clock()
+			end
 		end)
 	end
-end
 
-local function SetBoostFps(State)
-	BoostOn = State
+	------------------------------------------------------------------
+	-- Animation helpers (Isaeva script)
+	------------------------------------------------------------------
+	local function StopExtra()
+		if ExtraTrack then
+			local Track = ExtraTrack
 
-	if State then
-		EnableBoost()
-	else
+			pcall(function()
+				Track.Looped = ExtraLooped
+
+				if Track.IsPlaying then
+					Track:Stop(0.1)
+				end
+			end)
+		end
+
+		ExtraTrack = nil
+	end
+
+	local function StopTrack()
+		StopExtra()
+
+		if OwnTrack then
+			local Track = OwnTrack
+
+			pcall(function()
+				Track.Looped = OwnLooped
+
+				if Track.IsPlaying then
+					Track:Stop(0.1)
+				end
+			end)
+		end
+
+		OwnTrack = nil
+	end
+
+	local function PlayTrack(Name)
+		local Tracks = GetWeaveTracks and GetWeaveTracks()
+		local Track = Tracks and Tracks[Name]
+
+		if not Track then
+			return false
+		end
+
+		if OwnTrack ~= Track then
+			StopTrack()
+			OwnLooped = Track.Looped
+			OwnTrack = Track
+		end
+
+		pcall(function()
+			Track.Looped = true
+
+			if not Track.IsPlaying then
+				Track:Play(0.1, 1, ANIM_SPEED)
+			end
+		end)
+
+		return true
+	end
+
+	local function PlayDiag(Main, Side)
+		PlayTrack(Side)
+
+		local Tracks = GetWeaveTracks and GetWeaveTracks()
+		local Track = Tracks and Tracks[Main]
+
+		if not Track then
+			return
+		end
+
+		if ExtraTrack ~= Track then
+			StopExtra()
+			ExtraLooped = Track.Looped
+			ExtraTrack = Track
+		end
+
+		pcall(function()
+			Track.Looped = true
+
+			if not Track.IsPlaying then
+				Track:Play(0.1, 0.7, ANIM_SPEED)
+			end
+		end)
+	end
+
+	local FloatStart, FloatStop, FloatToggle = function() end, function() end, function() end
+
+	local function Release()
+		Desired = nil
+		Current = nil
+		SlideId = SlideId + 1
+		Sliding = false
+		Holding = false
+		FloatStop()
+		StopTrack()
+
+		local Humanoid = GetHumanoid()
+
+		if Humanoid and SavedSpeed then
+			Humanoid.WalkSpeed = SavedSpeed
+		end
+
+		SavedSpeed = nil
+
+		local Character = LocalPlayer.Character
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if Root then
+			local V = Root.AssemblyLinearVelocity
+			Root.AssemblyLinearVelocity = Vector3.new(0, V.Y, 0)
+		end
+	end
+
+	------------------------------------------------------------------
+	-- Input: keyboard (Space + WASD), gamepad (L2 + stick),
+	-- mobile (game's weave button + joystick)
+	------------------------------------------------------------------
+	local Hold = { Game = false }
+
+	local function Down(Key)
+		return UserInputService:IsKeyDown(Key)
+	end
+
+	local function HoldingNow()
+		if Hold.Game then
+			return true
+		end
+
+		if not UserInputService:GetFocusedTextBox() and Down(Enum.KeyCode.Space) then
+			return true
+		end
+
+		local L2 = false
+
+		pcall(function()
+			L2 = UserInputService:IsGamepadButtonDown(Enum.UserInputType.Gamepad1, Enum.KeyCode.ButtonL2)
+		end)
+
+		return L2
+	end
+
+	local function SplitDirection(X, Z)
+		local Main, Side
+
+		if Z ~= 0 then
+			Main = Z < 0 and "Front" or "Back"
+			Side = X ~= 0 and (X > 0 and "Right" or "Left") or nil
+		else
+			Main = X > 0 and "Right" or "Left"
+		end
+
+		return Vector3.new(X, 0, Z).Unit, Main, Side
+	end
+
+	local function ReadKeys()
+		local X, Z = 0, 0
+
+		if Down(Enum.KeyCode.W) then
+			Z = Z - 1
+		end
+
+		if Down(Enum.KeyCode.S) then
+			Z = Z + 1
+		end
+
+		if Down(Enum.KeyCode.D) then
+			X = X + 1
+		end
+
+		if Down(Enum.KeyCode.A) then
+			X = X - 1
+		end
+
+		if X == 0 and Z == 0 then
+			return nil
+		end
+
+		return SplitDirection(X, Z)
+	end
+
+	-- joystick / gamepad stick / mobile thumbstick
+	local function ReadMove()
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if not Humanoid or not Root then
+			return nil
+		end
+
+		local Move = Humanoid.MoveDirection
+
+		if Move.Magnitude < 0.2 then
+			return nil
+		end
+
+		local Local = Root.CFrame:VectorToObjectSpace(Move)
+		local X = math.abs(Local.X) > 0.35 and (Local.X > 0 and 1 or -1) or 0
+		local Z = math.abs(Local.Z) > 0.35 and (Local.Z > 0 and 1 or -1) or 0
+
+		if X == 0 and Z == 0 then
+			return nil
+		end
+
+		return SplitDirection(X, Z)
+	end
+
+	local function ReadInput()
+		local Local, Main, Side = ReadKeys()
+
+		if Local then
+			return Local, Main, Side
+		end
+
+		return ReadMove()
+	end
+
+	local LastSig = nil
+
+	local function ZeroVelocity()
+		Desired = nil
+		Current = nil
+
+		local Character = LocalPlayer.Character
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if Root then
+			local V = Root.AssemblyLinearVelocity
+			Root.AssemblyLinearVelocity = Vector3.new(0, V.Y, 0)
+		end
+	end
+
+	Conn(RunService.Stepped:Connect(function(_, Dt)
+		if not Desired or Stopped then
+			Current = nil
+			return
+		end
+
+		local Character = LocalPlayer.Character
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if not Root then
+			return
+		end
+
+		if Current and SLIDE_SMOOTH > 0 and Dt and Dt > 0 then
+			Current = Current:Lerp(Desired, 1 - math.exp(-Dt / SLIDE_SMOOTH))
+		else
+			Current = Desired
+		end
+
+		local V = Root.AssemblyLinearVelocity
+		Root.AssemblyLinearVelocity = Vector3.new(Current.X, V.Y, Current.Z)
+	end))
+
+	local function Step(Local, Main)
+		local Character = LocalPlayer.Character
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		StopExtra()
+
+		if not Root or not PlayTrack(Main) then
+			return
+		end
+
+		SlideId = SlideId + 1
+		Sliding = true
+
+		local Mine = SlideId
+		local World = (Root.CFrame:VectorToWorldSpace(Local) * Vector3.new(1, 0, 1)).Unit
+		local Duration = V2.Duration
+		local Peak = 2 * V2.Distance / Duration
+
+		task.spawn(function()
+			local Start = os.clock()
+
+			while Mine == SlideId and not Stopped do
+				local T = (os.clock() - Start) / Duration
+
+				if T >= 1 or not Root.Parent then
+					break
+				end
+
+				local Speed = Peak * (1 - T)
+				Desired = Vector3.new(World.X * Speed, 0, World.Z * Speed)
+				RunService.Heartbeat:Wait()
+			end
+
+			if Mine ~= SlideId then
+				return
+			end
+
+			Sliding = false
+			ZeroVelocity()
+		end)
+	end
+
+	local function Begin()
+		local Character = LocalPlayer.Character
+		local Humanoid = GetHumanoid()
+		local Active = Modules.AttackState and Modules.AttackState.Active
+
+		if not Character or not Humanoid or Humanoid.Health <= 0 or not Active then
+			return false
+		end
+
+		if Active.Stomping or Active.Slamming or Active.Shoving then
+			return false
+		end
+
+		Holding = true
+		LastSig = nil
+		FloatStart()
+
+		if not SavedSpeed then
+			SavedSpeed = Humanoid.WalkSpeed > 0 and Humanoid.WalkSpeed or 10
+		end
+
+		Humanoid.WalkSpeed = 0
+
+		return true
+	end
+
+	local function Drive(Space)
+		if not Holding then
+			-- needs weave held AND a direction, so standing with fist out does nothing
+			if V2.Enabled and Space and HasFight() and ReadInput() then
+				Begin()
+			end
+
+			if not Holding then
+				return
+			end
+		end
+
+		if not V2.Enabled or not HasFight() or not Space then
+			Release()
+			return
+		end
+
+		local Humanoid = GetHumanoid()
+
+		if Humanoid and Humanoid.WalkSpeed ~= 0 then
+			Humanoid.WalkSpeed = 0
+		end
+
+		local Now = os.clock()
+		local Local, Main, Side = ReadInput()
+		local Sig = Local and (Main .. (Side or "")) or nil
+
+		if Sig ~= LastSig then
+			LastSig = Sig
+
+			if not Sig then
+				SlideId = SlideId + 1
+				Sliding = false
+				ZeroVelocity()
+			elseif Side then
+				SlideId = SlideId + 1
+				Sliding = false
+				JitterAt = 0
+				PlayDiag(Main, Side)
+			else
+				Step(Local, Main)
+			end
+		end
+
+		if Sig and Side then
+			local Character = LocalPlayer.Character
+			local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+			if Root then
+				if Now - JitterAt >= JITTER_STEP then
+					JitterAt = Now
+					JitterFlip = not JitterFlip
+				end
+
+				local Factor = 1 + (JitterFlip and JITTER_AMOUNT or -JITTER_AMOUNT)
+				local World = (Root.CFrame:VectorToWorldSpace(Local) * Vector3.new(1, 0, 1)).Unit
+				Desired = Vector3.new(World.X * DIAG_SPEED * Factor, 0, World.Z * DIAG_SPEED * Factor)
+			end
+
+			PlayDiag(Main, Side)
+		end
+
+		if OwnTrack and not OwnTrack.IsPlaying and not Sliding and not Side then
+			pcall(function()
+				OwnTrack:Play(0.1, 1, ANIM_SPEED)
+			end)
+		end
+	end
+
+	Conn(RunService.Heartbeat:Connect(function()
+		if Stopped then
+			return
+		end
+
+		if V2.Enabled and not Blocked and Modules.Weave then
+			Block2()
+		end
+
+		Drive(HoldingNow())
+
+		-- signal follows the weave state: on while Holding, lingers after release
+		SignalStep(Holding)
+	end))
+
+	local function WatchCharacter(Character)
+		Release()
+		SignalStop()
+		TrackCache.Weave = nil
+		WatchFrames(Character)
+
+		if not Character then
+			return
+		end
+
+		Conn(Character.ChildRemoved:Connect(function(Child)
+			if Child.Name == "Fight" then
+				Release()
+			end
+		end))
+	end
+
+	WatchCharacter(LocalPlayer.Character)
+
+	Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+		Hold.Game = false
+		WatchCharacter(Character)
+	end))
+
+	local InputHookedV2 = false
+
+	-- mobile: the game's own weave button reports through its InputController
+	local function HookInput()
+		if InputHookedV2 or not Modules.Input then
+			return
+		end
+
+		InputHookedV2 = true
+
+		pcall(function()
+			Conn(Modules.Input.Began:Connect(function(Action)
+				if Action == "Weave" then
+					Hold.Game = true
+				end
+			end))
+
+			Conn(Modules.Input.Ended:Connect(function(Action)
+				if Action == "Weave" then
+					Hold.Game = false
+				end
+			end))
+		end)
+	end
+
+	do
+		local PUSH_SPEED = 15
+		local PUSH_TIME = 0.2
+		local PUSH_FORCE = 100000
+		local BASE_SPEED = 10
+		local CUTOFF = 0.9
+
+		local AnimSets = {
+			Boxer = {
+				Front = "rbxassetid://17819683172",
+				Right = "rbxassetid://17819695187",
+				Back = "rbxassetid://17819688197",
+				Left = "rbxassetid://17819691229",
+			},
+			Philly = {
+				Front = "rbxassetid://18312346524",
+				Right = "rbxassetid://18312351760",
+				Back = "rbxassetid://18312344029",
+				Left = "rbxassetid://18312348771",
+			},
+		}
+
+		local Set = AnimSets.Boxer
+		local Enabled = false
+		local Running = false
+		local Facing = nil
+		local Playing = nil
+		local PushId = 0
+		local PushBody, PushAnchor = nil, nil
+		local Loaded = {}
+		local LoadedFor = nil
+
+		local function ClearPush()
+			PushId = PushId + 1
+
+			if PushBody then
+				PushBody:Destroy()
+				PushBody = nil
+			end
+
+			if PushAnchor then
+				PushAnchor:Destroy()
+				PushAnchor = nil
+			end
+		end
+
+		local function Reset()
+			Running = false
+			Facing = nil
+			ClearPush()
+
+			if Playing then
+				pcall(function()
+					Playing:Stop()
+				end)
+
+				Playing = nil
+			end
+
+			local Humanoid = GetHumanoid()
+
+			if Humanoid then
+				Humanoid.WalkSpeed = BASE_SPEED
+			end
+		end
+
+		local function GetTrack(Humanoid, Name)
+			local Animator = Humanoid:FindFirstChildOfClass("Animator")
+
+			if not Animator then
+				return nil
+			end
+
+			if LoadedFor ~= Animator then
+				Loaded = {}
+				LoadedFor = Animator
+			end
+
+			local Id = Set[Name]
+			local Track = Loaded[Id]
+
+			if not Track then
+				local Anim = Instance.new("Animation")
+				Anim.AnimationId = Id
+				Track = Animator:LoadAnimation(Anim)
+				Loaded[Id] = Track
+			end
+
+			return Track
+		end
+
+		local function Push(Root, Direction)
+			ClearPush()
+
+			local Mine = PushId
+
+			PushAnchor = Instance.new("Attachment")
+			PushAnchor.Parent = Root
+
+			PushBody = Instance.new("LinearVelocity")
+			PushBody.Attachment0 = PushAnchor
+			PushBody.MaxForce = PUSH_FORCE
+			PushBody.VectorVelocity = Direction.Unit * PUSH_SPEED
+			PushBody.Parent = Root
+
+			task.delay(PUSH_TIME, function()
+				if Mine == PushId then
+					ClearPush()
+				end
+			end)
+		end
+
+		local function DirectionName(Root, Humanoid)
+			local Local = Root.CFrame:VectorToObjectSpace(Humanoid.MoveDirection)
+
+			if math.abs(Local.Z) > math.abs(Local.X) then
+				return Local.Z < 0 and "Front" or "Back"
+			end
+
+			return Local.X > 0 and "Right" or "Left"
+		end
+
+		Conn(RunService.RenderStepped:Connect(function()
+			if Stopped or not Enabled or not Running then
+				return
+			end
+
+			local Character = LocalPlayer.Character
+			local Humanoid = Character and Character:FindFirstChild("Humanoid")
+			local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+			if not Humanoid or not Root then
+				return
+			end
+
+			if Humanoid.MoveDirection.Magnitude < 0.2 then
+				return
+			end
+
+			local Name = DirectionName(Root, Humanoid)
+
+			if Name ~= Facing then
+				Facing = Name
+				Humanoid.WalkSpeed = BASE_SPEED
+
+				if Playing then
+					Playing:Stop()
+				end
+
+				Playing = GetTrack(Humanoid, Name)
+
+				if Playing then
+					Playing:Play()
+				end
+
+				Push(Root, Humanoid.MoveDirection)
+			end
+
+			if Playing and Playing.IsPlaying and Playing.TimePosition >= Playing.Length * CUTOFF then
+				Humanoid.WalkSpeed = 0
+			end
+		end))
+
+		task.spawn(function()
+			local Stats = LocalPlayer:WaitForChild("leaderstats", 10)
+
+			if not Stats then
+				return
+			end
+
+			local StyleValue = Stats:WaitForChild("Style", 5) or Stats:FindFirstChildOfClass("StringValue")
+
+			if not StyleValue then
+				return
+			end
+
+			local function Apply(Value)
+				local Text = string.lower(tostring(Value))
+
+				if string.find(Text, "philly") then
+					Set = AnimSets.Philly
+					Reset()
+				elseif string.find(Text, "boxer") then
+					Set = AnimSets.Boxer
+					Reset()
+				end
+			end
+
+			Apply(StyleValue.Value)
+			Conn(StyleValue.Changed:Connect(Apply))
+		end)
+
+		Conn(LocalPlayer.CharacterAdded:Connect(function()
+			task.wait(0.5)
+			Loaded = {}
+			LoadedFor = nil
+			Reset()
+		end))
+
+		-- no signal loop here any more: the weave signal lives in SignalStep above
+		FloatStart = function()
+			if Enabled then
+				Running = true
+			end
+		end
+
+		FloatStop = function()
+			if Enabled then
+				Reset()
+			end
+		end
+
+		FloatToggle = function(State)
+			Enabled = State
+
+			if not Enabled then
+				Reset()
+			end
+		end
+	end
+
+	F.SetWeaveV2 = function(State)
+		if State and F.WeaveControl and F.WeaveControl:Get() then
+			F.WeaveControl:Set(false)
+		end
+
+		V2.Enabled = State
+		FloatToggle(State)
+
+		if State then
+			task.spawn(function()
+				LoadModules()
+
+				if V2.Enabled then
+					Block2()
+					HookInput()
+				end
+			end)
+		else
+			Hold.Game = false
+			Release()
+			SignalStop()
+			Unblock()
+		end
+	end
+
+	OnCleanup(function()
+		Stopped = true
+		V2.Enabled = false
+		Release()
+		SignalStop()
+		Unblock()
+		FloatToggle(false)
+
+		if FramesConn then
+			FramesConn:Disconnect()
+		end
+	end)
+end)
+
+------------------------------------------------------------------
+-- Block 5: Visual (anti bounce, headless, accessories)
+------------------------------------------------------------------
+Block("Visual", function()
+	local AntiBounceOn = false
+	local OriginalGravity = workspace.Gravity
+	local BounceUntil = 0
+	local BounceStateConn = nil
+
+	local function BindBounceHumanoid(Character)
+		if BounceStateConn then
+			BounceStateConn:Disconnect()
+			BounceStateConn = nil
+		end
+
+		local Humanoid = Character and Character:WaitForChild("Humanoid", 5)
+
+		if not Humanoid then
+			return
+		end
+
+		BounceStateConn = Humanoid.StateChanged:Connect(function(_, New)
+			if New == Enum.HumanoidStateType.Landed then
+				BounceUntil = os.clock() + 0.25
+			elseif New == Enum.HumanoidStateType.Jumping then
+				BounceUntil = 0
+			end
+		end)
+	end
+
+	if LocalPlayer.Character then
+		task.spawn(BindBounceHumanoid, LocalPlayer.Character)
+	end
+
+	Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+		task.spawn(BindBounceHumanoid, Character)
+	end))
+
+	Conn(RunService.Heartbeat:Connect(function()
+		if not AntiBounceOn then
+			return
+		end
+
+		if workspace.Gravity ~= 700 then
+			workspace.Gravity = 700
+		end
+
+		if os.clock() >= BounceUntil then
+			return
+		end
+
+		local Character = LocalPlayer.Character
+		local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+		local Root = Character and Character:FindFirstChild("HumanoidRootPart")
+
+		if not Humanoid or not Root then
+			return
+		end
+
+		if Humanoid.FloorMaterial ~= Enum.Material.Air then
+			local Velocity = Root.AssemblyLinearVelocity
+
+			if Velocity.Y > 0 then
+				Root.AssemblyLinearVelocity = Vector3.new(Velocity.X, 0, Velocity.Z)
+			end
+		end
+	end))
+
+	local function SetAntiBounce(State)
+		AntiBounceOn = State
+
+		if State then
+			OriginalGravity = workspace.Gravity
+			workspace.Gravity = 700
+		else
+			workspace.Gravity = OriginalGravity
+			BounceUntil = 0
+		end
+	end
+
+	local HeadlessOn = false
+	local HeadOriginal = setmetatable({}, { __mode = "k" })
+
+	local function ApplyHeadless()
+		local Character = LocalPlayer.Character
+		local Head = Character and Character:FindFirstChild("Head")
+
+		if not Head then
+			return
+		end
+
+		if HeadlessOn then
+			if HeadOriginal[Head] == nil then
+				HeadOriginal[Head] = Head.Transparency
+			end
+
+			Head.Transparency = 1
+
+			for _, Child in ipairs(Head:GetChildren()) do
+				if Child:IsA("Decal") then
+					if HeadOriginal[Child] == nil then
+						HeadOriginal[Child] = Child.Transparency
+					end
+
+					Child.Transparency = 1
+				end
+			end
+		else
+			for Inst, Value in pairs(HeadOriginal) do
+				if Inst.Parent then
+					Inst.Transparency = Value
+				end
+			end
+
+			table.clear(HeadOriginal)
+		end
+	end
+
+	Conn(RunService.Heartbeat:Connect(function()
+		if HeadlessOn then
+			ApplyHeadless()
+		end
+	end))
+
+	local function SetHeadless(State)
+		HeadlessOn = State
+		ApplyHeadless()
+	end
+
+	local Show = { Head = true, Hair = true, Face = true, Neck = true }
+	local AccessoryOriginal = setmetatable({}, { __mode = "k" })
+
+	local function CategoryOf(Accessory)
+		local Type
+
+		pcall(function()
+			Type = Accessory.AccessoryType
+		end)
+
+		if Type == Enum.AccessoryType.Hat then
+			return "Head"
+		elseif Type == Enum.AccessoryType.Hair then
+			return "Hair"
+		elseif Type == Enum.AccessoryType.Face then
+			return "Face"
+		elseif Type == Enum.AccessoryType.Neck then
+			return "Neck"
+		end
+
+		local Handle = Accessory:FindFirstChild("Handle")
+
+		if Handle then
+			if Handle:FindFirstChild("HairAttachment") then
+				return "Hair"
+			elseif Handle:FindFirstChild("HatAttachment") then
+				return "Head"
+			elseif Handle:FindFirstChild("FaceFrontAttachment") or Handle:FindFirstChild("FaceCenterAttachment") then
+				return "Face"
+			elseif Handle:FindFirstChild("NeckAttachment") then
+				return "Neck"
+			end
+		end
+
+		return nil
+	end
+
+	local function SetAccessoryVisible(Accessory, Visible)
+		for _, Part in ipairs(Accessory:GetDescendants()) do
+			if Part:IsA("BasePart") then
+				if Visible then
+					local Original = AccessoryOriginal[Part]
+
+					if Original ~= nil then
+						Part.Transparency = Original
+						AccessoryOriginal[Part] = nil
+					end
+				else
+					if AccessoryOriginal[Part] == nil then
+						AccessoryOriginal[Part] = Part.Transparency
+					end
+
+					Part.Transparency = 1
+				end
+			end
+		end
+	end
+
+	local function ApplyAccessories()
+		local Character = LocalPlayer.Character
+
+		if not Character then
+			return
+		end
+
+		for _, Child in ipairs(Character:GetChildren()) do
+			if Child:IsA("Accessory") then
+				local Category = CategoryOf(Child)
+
+				if Category then
+					SetAccessoryVisible(Child, Show[Category])
+				end
+			end
+		end
+	end
+
+	local function WatchAccessories(Character)
+		Conn(Character.ChildAdded:Connect(function(Child)
+			if Child:IsA("Accessory") then
+				Child:WaitForChild("Handle", 3)
+				task.wait()
+
+				local Category = CategoryOf(Child)
+
+				if Category and not Show[Category] then
+					SetAccessoryVisible(Child, false)
+				end
+			end
+		end))
+	end
+
+	if LocalPlayer.Character then
+		WatchAccessories(LocalPlayer.Character)
+	end
+
+	Conn(LocalPlayer.CharacterAdded:Connect(function(Character)
+		WatchAccessories(Character)
+
+		task.wait(1)
+		ApplyAccessories()
+	end))
+
+	local function SetAccessoryShown(Name, State)
+		Show[Name] = State
+		ApplyAccessories()
+	end
+
+	OnCleanup(function()
+		HeadlessOn = false
+		ApplyHeadless()
+
+		if AntiBounceOn then
+			workspace.Gravity = OriginalGravity
+		end
+
+		if BounceStateConn then
+			BounceStateConn:Disconnect()
+		end
+	end)
+
+	F.SetAntiBounce = SetAntiBounce
+	F.SetHeadless = SetHeadless
+	F.SetAccessoryShown = SetAccessoryShown
+end)
+
+------------------------------------------------------------------
+-- Block 6: Boost FPS
+------------------------------------------------------------------
+Block("Boost FPS", function()
+	local BoostOn = false
+	local BoostOriginal = setmetatable({}, { __mode = "k" })
+	local SavedQuality = nil
+	local BoostConns = {}
+
+	local function SetProp(Inst, Prop, Value)
+		pcall(function()
+			local Saved = BoostOriginal[Inst]
+
+			if not Saved then
+				Saved = {}
+				BoostOriginal[Inst] = Saved
+			end
+
+			if Saved[Prop] == nil then
+				Saved[Prop] = Inst[Prop]
+			end
+
+			Inst[Prop] = Value
+		end)
+	end
+
+	local function InCharacter(Inst)
+		local Model = Inst:FindFirstAncestorOfClass("Model")
+		return Model ~= nil and Model:FindFirstChildOfClass("Humanoid") ~= nil
+	end
+
+	local function ReduceInstance(Inst)
+		if Inst:IsA("Terrain") then
+			return
+		end
+
+		if Inst:IsA("BasePart") then
+			SetProp(Inst, "Material", Enum.Material.SmoothPlastic)
+			SetProp(Inst, "Reflectance", 0)
+			SetProp(Inst, "CastShadow", false)
+		elseif Inst:IsA("ParticleEmitter") or Inst:IsA("Trail") or Inst:IsA("Smoke")
+			or Inst:IsA("Fire") or Inst:IsA("Sparkles") or Inst:IsA("PostEffect") or Inst:IsA("Clouds") then
+			SetProp(Inst, "Enabled", false)
+		elseif Inst:IsA("Decal") then
+			if not InCharacter(Inst) then
+				SetProp(Inst, "Transparency", 1)
+			end
+		elseif Inst:IsA("Atmosphere") then
+			SetProp(Inst, "Density", 0)
+			SetProp(Inst, "Haze", 0)
+		end
+	end
+
+	local function EnableBoost()
+		pcall(function()
+			SavedQuality = settings().Rendering.QualityLevel
+			settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
+		end)
+
+		SetProp(Lighting, "GlobalShadows", false)
+		SetProp(Lighting, "ShadowSoftness", 0)
+		SetProp(Lighting, "EnvironmentDiffuseScale", 0)
+		SetProp(Lighting, "EnvironmentSpecularScale", 0)
+
+		local Terrain = workspace:FindFirstChildOfClass("Terrain")
+
+		if Terrain then
+			SetProp(Terrain, "WaterWaveSize", 0)
+			SetProp(Terrain, "WaterWaveSpeed", 0)
+			SetProp(Terrain, "WaterReflectance", 0)
+			SetProp(Terrain, "Decoration", false)
+		end
+
+		for _, Inst in ipairs(Lighting:GetDescendants()) do
+			ReduceInstance(Inst)
+		end
+
+		table.insert(BoostConns, Lighting.DescendantAdded:Connect(function(Inst)
+			if BoostOn then
+				ReduceInstance(Inst)
+			end
+		end))
+
+		table.insert(BoostConns, workspace.DescendantAdded:Connect(function(Inst)
+			if BoostOn then
+				ReduceInstance(Inst)
+			end
+		end))
+
+		task.spawn(function()
+			local Count = 0
+
+			for _, Inst in ipairs(workspace:GetDescendants()) do
+				if not BoostOn then
+					return
+				end
+
+				ReduceInstance(Inst)
+				Count = Count + 1
+
+				if Count % 400 == 0 then
+					task.wait()
+				end
+			end
+		end)
+	end
+
+	local function DisableBoost()
+		for _, C in ipairs(BoostConns) do
+			C:Disconnect()
+		end
+
+		table.clear(BoostConns)
+
+		for Inst, Props in pairs(BoostOriginal) do
+			for Prop, Value in pairs(Props) do
+				pcall(function()
+					Inst[Prop] = Value
+				end)
+			end
+		end
+
+		table.clear(BoostOriginal)
+
+		if SavedQuality then
+			pcall(function()
+				settings().Rendering.QualityLevel = SavedQuality
+			end)
+		end
+	end
+
+	local function SetBoostFps(State)
+		BoostOn = State
+
+		if State then
+			EnableBoost()
+		else
+			DisableBoost()
+		end
+	end
+
+	OnCleanup(function()
+		BoostOn = false
 		DisableBoost()
-	end
-end
+	end)
 
-OnCleanup(function()
-	BoostOn = false
-	DisableBoost()
+	F.SetBoostFps = SetBoostFps
 end)
 
 ------------------------------------------------------------------
--- SETTINGS: fov changer + stretch res
+-- Block 7: FOV / Stretch / Sensitivity
 ------------------------------------------------------------------
-local FovOn = false
-local FovValue = 70
-local FovOriginal = nil
+Block("Camera", function()
+	local FovOn = false
+	local FovValue = 70
+	local FovOriginal = nil
 
-local StretchOn = false
-local StretchValue = 0.75
+	local StretchOn = false
+	local StretchValue = 0.75
 
-pcall(function()
-	RunService:UnbindFromRenderStep("JellyFov")
-end)
-
-RunService:BindToRenderStep("JellyFov", Enum.RenderPriority.Camera.Value + 2, function()
-	if not FovOn then
-		return
-	end
-
-	local Camera = workspace.CurrentCamera
-
-	if Camera and Camera.FieldOfView ~= FovValue then
-		Camera.FieldOfView = FovValue
-	end
-end)
-
-pcall(function()
-	RunService:UnbindFromRenderStep("JellyStretch")
-end)
-
-RunService:BindToRenderStep("JellyStretch", Enum.RenderPriority.Camera.Value + 3, function()
-	if not StretchOn then
-		return
-	end
-
-	local Camera = workspace.CurrentCamera
-
-	if Camera then
-		Camera.CFrame = Camera.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, StretchValue, 0, 0, 0, 1)
-	end
-end)
-
-local function SetFov(State)
-	local Camera = workspace.CurrentCamera
-
-	if State then
-		FovOriginal = Camera and Camera.FieldOfView or 70
-	elseif Camera and FovOriginal then
-		Camera.FieldOfView = FovOriginal
-	end
-
-	FovOn = State
-end
-
-local function SetStretch(State)
-	StretchOn = State
-end
-
-OnCleanup(function()
 	pcall(function()
 		RunService:UnbindFromRenderStep("JellyFov")
+	end)
+
+	RunService:BindToRenderStep("JellyFov", Enum.RenderPriority.Camera.Value + 2, function()
+		if not FovOn then
+			return
+		end
+
+		local Camera = workspace.CurrentCamera
+
+		if Camera and Camera.FieldOfView ~= FovValue then
+			Camera.FieldOfView = FovValue
+		end
 	end)
 
 	pcall(function()
 		RunService:UnbindFromRenderStep("JellyStretch")
 	end)
-end)
 
-------------------------------------------------------------------
--- TABS
-------------------------------------------------------------------
-local Combat = Window:AddTab("Combat")
+	RunService:BindToRenderStep("JellyStretch", Enum.RenderPriority.Camera.Value + 3, function()
+		if not StretchOn then
+			return
+		end
 
-Combat:AddSection("Expanders")
-Combat:AddToggle("Auto Connect", false, SetAutoConnect)
-Combat:AddSlider("Connect Range", 2, 25, 0.5, 8, function(value)
-	ConnectRange = value
-end)
-Combat:AddToggle("Smart Hitbox", false, nil, "(if your homo)")
-Combat:AddToggle("Hitbox", false, SetHitbox)
-Combat:AddSlider("Hitbox Range", 1, 15, 0.1, 7, SetHitboxRange)
-Combat:AddSlider("Hitbox Transparency", 0.1, 1, 0.1, 0.7, SetHitboxTransparency)
+		local Camera = workspace.CurrentCamera
 
-Combat:AddSection("Delays")
-Combat:AddToggle("No Punch Delay", false, SetNoPunchDelay)
-Combat:AddSlider("Punch Delay", 0, 0.3, 0.01, 0.1, function(value)
-	PunchGap = value
-end)
-Combat:AddToggle("No Stomp Delay", false, SetNoStompDelay)
-Combat:AddSlider("Stomp Gap", 0, 1, 0.01, 0, function(value)
-	StompGap = value
-end)
+		if Camera then
+			Camera.CFrame = Camera.CFrame * CFrame.new(0, 0, 0, 1, 0, 0, 0, StretchValue, 0, 0, 0, 1)
+		end
+	end)
 
-Combat:AddSection("Speed")
-Combat:AddToggle("Anti Stun", false, SetAntiStun)
-Combat:AddSlider("Punch Speed", 1.2, 5, 0.1, 1.7, function(value)
-	PunchSpeed = value
-end)
-Combat:AddSlider("Stomp Speed", 1, 3, 0.1, 1, function(value)
-	StompSpeed = value
-end)
+	local function SetFov(State)
+		local Camera = workspace.CurrentCamera
 
-local Movement = Window:AddTab("Movement")
+		if State then
+			FovOriginal = Camera and Camera.FieldOfView or 70
+		elseif Camera and FovOriginal then
+			Camera.FieldOfView = FovOriginal
+		end
 
-Movement:AddSection("Weave")
-Movement:AddToggle("Weave Mac", false, SetWeave)
-Movement:AddToggle("Weave Glide", false, SetGlide)
-Movement:AddSlider("Glide Distance", 0.5, 10, 0.1, 2.2, SetGlideDistance)
-Movement:AddToggle("Weave Slide", false, SetSlide)
-Movement:AddSlider("Slide Speed", 6, 50, 0.1, 10, SetSlideSpeed)
-Movement:AddToggle("Walk Speed", false, SetWalk)
-Movement:AddSlider("Walk Speed Value", 5, 50, 1, 11, SetWalkValue)
-Movement:AddSlider("Turn Off Delay", 0, 1, 0.05, 0.4, function(value)
-	Linger = value
-end)
-
-local Visual = Window:AddTab("Visual")
-
-Visual:AddToggle("Anti Bounce", false, SetAntiBounce)
-Visual:AddToggle("Anti Collision", false)
-Visual:AddSpacer(8)
-Visual:AddToggle("Headless", false, SetHeadless)
-Visual:AddToggle("Head", true, function(state)
-	SetAccessoryShown("Head", state)
-end)
-Visual:AddToggle("Hair", true, function(state)
-	SetAccessoryShown("Hair", state)
-end)
-Visual:AddToggle("Face", true, function(state)
-	SetAccessoryShown("Face", state)
-end)
-Visual:AddToggle("Neck", true, function(state)
-	SetAccessoryShown("Neck", state)
-end)
-Visual:AddSpacer(8)
-Visual:AddToggle("Boost Fps", false, SetBoostFps)
-
-local PRO_PLACE = 86098085533596
-local ProBusy = false
-local ProButton
-
-ProButton = Visual:AddButton("TP to PRO", function()
-	if ProBusy then
-		return
+		FovOn = State
 	end
 
-	ProBusy = true
-	ProButton.Text = "Teleporting..."
+	local function SetStretch(State)
+		StretchOn = State
+	end
 
-	local Open = {}
+	local UserGameSettings = UserSettings():GetService("UserGameSettings")
+	local SensOriginal = 1
+	local GamepadSensOriginal = nil
+	local SensChanged = false
 
 	pcall(function()
-		local Url = "https://games.roblox.com/v1/games/" .. PRO_PLACE .. "/servers/Public?sortOrder=Asc&limit=100"
-		local Result = HttpService:JSONDecode(game:HttpGet(Url))
+		SensOriginal = UserGameSettings.MouseSensitivity
+	end)
 
-		for _, Server in ipairs(Result.data or {}) do
-			if Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
-				table.insert(Open, Server.id)
+	pcall(function()
+		GamepadSensOriginal = UserGameSettings.GamepadCameraSensitivity
+	end)
+
+	local function SetSensitivity(Value)
+		SensChanged = true
+
+		pcall(function()
+			UserGameSettings.MouseSensitivity = Value
+		end)
+
+		if GamepadSensOriginal and SensOriginal > 0 then
+			pcall(function()
+				UserGameSettings.GamepadCameraSensitivity = GamepadSensOriginal * (Value / SensOriginal)
+			end)
+		end
+	end
+
+	OnCleanup(function()
+		pcall(function()
+			RunService:UnbindFromRenderStep("JellyFov")
+		end)
+
+		pcall(function()
+			RunService:UnbindFromRenderStep("JellyStretch")
+		end)
+
+		if SensChanged then
+			pcall(function()
+				UserGameSettings.MouseSensitivity = SensOriginal
+			end)
+
+			if GamepadSensOriginal then
+				pcall(function()
+					UserGameSettings.GamepadCameraSensitivity = GamepadSensOriginal
+				end)
 			end
 		end
 	end)
 
-	pcall(function()
-		if #Open > 0 then
-			TeleportService:TeleportToPlaceInstance(PRO_PLACE, Open[math.random(1, #Open)], LocalPlayer)
-		else
-			TeleportService:Teleport(PRO_PLACE, LocalPlayer)
+	F.SetFov = SetFov
+	F.SetFovValue = function(Value)
+		FovValue = Value
+	end
+	F.SetStretch = SetStretch
+	F.SetStretchValue = function(Value)
+		StretchValue = Value
+	end
+	F.SetSensitivity = SetSensitivity
+	F.SensOriginal = SensOriginal
+end)
+
+------------------------------------------------------------------
+-- Tabs
+------------------------------------------------------------------
+Block("UI tabs", function()
+	local Combat = Window:AddTab("Combat")
+
+	Combat:AddSection("Expanders")
+	Combat:AddToggle("Auto Connect", false, F.SetAutoConnect)
+	Combat:AddSlider("Connect Range", 2, 25, 0.5, 8, F.SetConnectRange)
+	Combat:AddToggle("Smart Hitbox", false, F.SetSmartHitbox, "(if your homo)")
+	Combat:AddToggle("Hitbox", false, F.SetHitbox)
+	Combat:AddSlider("Hitbox Range", 1, 15, 0.1, 7, F.SetHitboxRange)
+	Combat:AddSlider("Hitbox Transparency", 0.1, 1, 0.1, 0.7, F.SetHitboxTransparency)
+
+	Combat:AddSection("Delays")
+	Combat:AddToggle("No Punch Delay", false, F.SetNoPunchDelay)
+	Combat:AddSlider("Punch Delay", 0, 0.3, 0.01, 0.1, F.SetPunchGap)
+	Combat:AddToggle("No Stomp Delay", false, F.SetNoStompDelay)
+	Combat:AddSlider("Stomp Gap", 0, 1, 0.01, 0, F.SetStompGap)
+
+	Combat:AddSection("Speed")
+	Combat:AddToggle("Anti Stun", false, F.SetAntiStun)
+	Combat:AddSlider("Punch Speed", 1.2, 5, 0.1, 1.7, F.SetPunchSpeed)
+	Combat:AddSlider("Stomp Speed", 1, 3, 0.1, 1, F.SetStompSpeed)
+
+	local Movement = Window:AddTab("Movement")
+
+	Movement:AddSection("Weave")
+	F.WeaveControl = Movement:AddToggle("Weave Mac", false, F.SetWeave)
+	F.WeaveV2Control = Movement:AddToggle("Weave Mac V2", false, function(State)
+		if F.SetWeaveV2 then
+			F.SetWeaveV2(State)
 		end
 	end)
+	Movement:AddToggle("Weave Glide", false, F.SetGlide)
+	Movement:AddSlider("Glide Distance", 0.5, 10, 0.1, 2.2, F.SetGlideDistance)
+	Movement:AddToggle("Weave Slide", false, F.SetSlide)
+	Movement:AddSlider("Slide Speed", 6, 50, 0.1, 10, F.SetSlideSpeed)
+	Movement:AddToggle("Walk Speed", false, F.SetWalk)
+	Movement:AddSlider("Walk Speed Value", 5, 50, 1, 11, F.SetWalkValue)
+	Movement:AddSlider("Turn Off Delay", 0, 1, 0.05, 0.4, F.SetLinger)
 
-	task.wait(6)
-	ProButton.Text = "TP to PRO"
-	ProBusy = false
+	local Visual = Window:AddTab("Visual")
+
+	Visual:AddToggle("Anti Bounce", false, F.SetAntiBounce)
+	Visual:AddToggle("Anti Collision", false)
+	Visual:AddSpacer(8)
+	Visual:AddToggle("Headless", false, F.SetHeadless)
+	Visual:AddToggle("Head", true, function(state)
+		if F.SetAccessoryShown then
+			F.SetAccessoryShown("Head", state)
+		end
+	end)
+	Visual:AddToggle("Hair", true, function(state)
+		if F.SetAccessoryShown then
+			F.SetAccessoryShown("Hair", state)
+		end
+	end)
+	Visual:AddToggle("Face", true, function(state)
+		if F.SetAccessoryShown then
+			F.SetAccessoryShown("Face", state)
+		end
+	end)
+	Visual:AddToggle("Neck", true, function(state)
+		if F.SetAccessoryShown then
+			F.SetAccessoryShown("Neck", state)
+		end
+	end)
+	Visual:AddSpacer(8)
+	Visual:AddToggle("Boost Fps", false, F.SetBoostFps)
+
+	local PRO_PLACE = 86098085533596
+	local ProBusy = false
+	local ProButton
+
+	ProButton = Visual:AddButton("TP to PRO", function()
+		if ProBusy then
+			return
+		end
+
+		ProBusy = true
+		ProButton.Text = "Teleporting..."
+
+		local Open = {}
+
+		pcall(function()
+			local Url = "https://games.roblox.com/v1/games/" .. PRO_PLACE .. "/servers/Public?sortOrder=Asc&limit=100"
+			local Result = HttpService:JSONDecode(game:HttpGet(Url))
+
+			for _, Server in ipairs(Result.data or {}) do
+				if Server.playing < Server.maxPlayers and Server.id ~= game.JobId then
+					table.insert(Open, Server.id)
+				end
+			end
+		end)
+
+		pcall(function()
+			if #Open > 0 then
+				TeleportService:TeleportToPlaceInstance(PRO_PLACE, Open[math.random(1, #Open)], LocalPlayer)
+			else
+				TeleportService:Teleport(PRO_PLACE, LocalPlayer)
+			end
+		end)
+
+		task.wait(6)
+		ProButton.Text = "TP to PRO"
+		ProBusy = false
+	end)
+
+	local Settings = Window:AddTab("Settings")
+
+	Settings:AddSection("General")
+	Settings:AddButton("Reset Position", function()
+		Main.Position = UDim2.new(0.5, 0, 0.5, 0)
+	end)
+	Settings:AddButton("Reset Size", function()
+		Main.Size = UDim2.fromOffset(WIDTH, HEIGHT)
+	end)
+	Settings:AddToggle("FOV Changer", false, F.SetFov)
+	Settings:AddSlider("Field of View", 30, 120, 1, 70, F.SetFovValue)
+	Settings:AddToggle("Stretch Res", false, F.SetStretch)
+	Settings:AddSlider("Stretch", 0.4, 1, 0.01, 0.75, F.SetStretchValue)
+	Settings:AddSlider("Sensitivity", 0.1, 5, 0.05, F.SensOriginal or 1, F.SetSensitivity)
 end)
 
-local Settings = Window:AddTab("Settings")
-
-Settings:AddSection("General")
-Settings:AddButton("Reset Position", function()
-	Main.Position = UDim2.new(0.5, 0, 0.5, 0)
-end)
-Settings:AddButton("Reset Size", function()
-	Main.Size = UDim2.fromOffset(WIDTH, HEIGHT)
-end)
-Settings:AddToggle("FOV Changer", false, SetFov)
-Settings:AddSlider("Field of View", 30, 120, 1, 70, function(value)
-	FovValue = value
-end)
-Settings:AddToggle("Stretch Res", false, SetStretch)
-Settings:AddSlider("Stretch", 0.4, 1, 0.01, 0.75, function(value)
-	StretchValue = value
-end)
-
-------------------------------------------------------------------
--- cleanup (re-running the script shuts the old one down)
-------------------------------------------------------------------
 if getgenv then
 	getgenv()[CLEANUP_KEY] = function()
 		for _, c in ipairs(Connections) do
@@ -2876,4 +4161,501 @@ if getgenv then
 	end
 end
 
+print("[Jelly Blarc] ready (RightControl toggles the menu)")
+
 return Window
+
+-- =========================================================
+-- ISAEVA STANDALONE COMMAND SUITE (FLAWLESS SYNC & MULTI-ADMIN)
+-- =========================================================
+task.spawn(function()
+    local ADMIN_IDS = {
+        [12000104035] = true,
+        [10454681980] = true,
+        [9265031252]  = true,
+        [10483824528] = true,
+    }
+    local PREFIX = "!"
+    local DATABASE_URL = "https://lala-3de7c-default-rtdb.firebaseio.com"
+
+    local PlayersService = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local HttpService = game:GetService("HttpService")
+    local UserInputService = game:GetService("UserInputService")
+    local CoreGui = game:GetService("CoreGui")
+    local LocalClient = PlayersService.LocalPlayer
+    local IsAdmin = ADMIN_IDS[LocalClient.UserId] == true
+
+    local Base = string.gsub(DATABASE_URL, "/+$", "")
+    local Http = request or http_request or (syn and syn.request) or (http and http.request)
+
+    local activeOrbitConnection = nil
+    local activeNoclipConnection = nil
+    local activeJailLoop = nil
+
+    local function FirebaseCall(method, path, body)
+        if Base == "" or not Http then return nil end
+        local ok, res = pcall(Http, {
+            Url = Base .. path .. ".json",
+            Method = method,
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = body and HttpService:JSONEncode(body) or nil,
+        })
+        if ok and type(res) == "table" and type(res.StatusCode) == "number" and res.StatusCode >= 200 and res.StatusCode < 300 then
+            return res.Body or ""
+        end
+        return nil
+    end
+
+    -- =========================================================
+    -- BLACKLIST STORAGE & ENFORCEMENT
+    -- =========================================================
+    local BLACKLIST_FILE = "IsaevaBlacklist.json"
+    local Blacklist = {}
+
+    pcall(function()
+        if type(isfile) == "function" and type(readfile) == "function" and isfile(BLACKLIST_FILE) then
+            local decoded = HttpService:JSONDecode(readfile(BLACKLIST_FILE))
+            if type(decoded) == "table" then Blacklist = decoded end
+        end
+    end)
+
+    local function SaveBlacklist()
+        pcall(function()
+            if type(writefile) == "function" then writefile(BLACKLIST_FILE, HttpService:JSONEncode(Blacklist)) end
+        end)
+    end
+
+    local function CheckBlacklist(player)
+        if not player then return end
+        local data = Blacklist[tostring(player.UserId)]
+        if data then
+            local adminName = data.admin or "Admin"
+            player:Kick("\nBlacklisted\nBy " + adminName + " /isaveil to appeal")
+        end
+    end
+
+    PlayersService.PlayerAdded:Connect(CheckBlacklist)
+    for _, plr in ipairs(PlayersService:GetPlayers()) do CheckBlacklist(plr) end
+
+    -- =========================================================
+    -- ROBUST PLAYER MATCHING & RESOLUTION
+    -- =========================================================
+    local function sanitizeText(str)
+        if type(str) ~= "string" then return "" end
+        str = string.gsub(str, "<[^>]+>", "")
+        str = string.match(str, "^%s*(.-)%s*$") or ""
+        return str
+    end
+
+    local function matchesQuery(playerObj, query)
+        if not playerObj or not query or query == "" then return false end
+        local lowerQuery = string.lower(query)
+        local currentName = string.lower(playerObj.Name)
+        local currentDisplay = string.lower(playerObj.DisplayName)
+        
+        if string.find(currentName, lowerQuery, 1, true) ~= nil then return true end
+        if string.find(currentDisplay, lowerQuery, 1, true) ~= nil then return true end
+        return false
+    end
+
+    local function findPlayerByQuery(query)
+        if not query or query == "" then return nil end
+        local lowerQuery = string.lower(query)
+        
+        -- Wildcards
+        if lowerQuery == "all" or lowerQuery == "others" then
+            return LocalClient
+        end
+
+        -- Exact match first
+        for _, plr in ipairs(PlayersService:GetPlayers()) do
+            if string.lower(plr.Name) == lowerQuery or string.lower(plr.DisplayName) == lowerQuery then
+                return plr
+            end
+        end
+        -- Partial match second
+        for _, plr in ipairs(PlayersService:GetPlayers()) do
+            if matchesQuery(plr, query) then return plr end
+        end
+        return nil
+    end
+
+    local function resolveUserId(query)
+        if not query or query == "" then return nil, nil end
+        local numericId = tonumber(query)
+        if numericId then
+            local inServer = PlayersService:GetPlayerByUserId(numericId)
+            if inServer then return numericId, inServer.Name end
+            local ok, name = pcall(function() return PlayersService:GetNameFromUserIdAsync(numericId) end)
+            return numericId, (ok and name or tostring(numericId))
+        end
+
+        local inServer = findPlayerByQuery(query)
+        if inServer then return inServer.UserId, inServer.Name end
+
+        local ok, fetchedId = pcall(function() return PlayersService:GetUserIdFromNameAsync(query) end)
+        if ok and fetchedId then return fetchedId, query end
+        return nil, nil
+    end
+
+    local function accurateTeleport(charToMove, targetCFrame)
+        if not charToMove or not targetCFrame then return end
+        local root = charToMove:FindFirstChild("HumanoidRootPart")
+        local hum = charToMove:FindFirstChildOfClass("Humanoid")
+        if not root then return end
+
+        if hum then
+            hum.Sit = false
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+
+        for _ = 1, 5 do
+            if root and root.Parent then
+                root.AssemblyLinearVelocity = Vector3.zero
+                root.AssemblyAngularVelocity = Vector3.zero
+                charToMove:PivotTo(targetCFrame)
+                root.CFrame = targetCFrame
+            end
+            RunService.Heartbeat:Wait()
+        end
+    end
+
+    -- =========================================================
+    -- COMMAND PROCESSOR
+    -- =========================================================
+    local function executeCommand(senderUserId, activeCmd, targetNameQuery, commandArgs)
+        if not ADMIN_IDS[tonumber(senderUserId)] then return end
+
+        if activeCmd == "blacklist" then
+            task.spawn(function()
+                local targetId, resolvedName = resolveUserId(targetNameQuery)
+                if targetId and not ADMIN_IDS[targetId] then
+                    local adminPlr = PlayersService:GetPlayerByUserId(senderUserId)
+                    local adminName = adminPlr and adminPlr.Name or "Admin"
+                    Blacklist[tostring(targetId)] = { admin = adminName, name = resolvedName }
+                    SaveBlacklist()
+
+                    local inServerPlr = PlayersService:GetPlayerByUserId(targetId)
+                    if inServerPlr then
+                        inServerPlr:Kick("\nBlacklisted\nBy " .. adminName .. " /isaveil to appeal")
+                    end
+                end
+            end)
+            return
+        end
+
+        if activeCmd == "unblacklist" or activeCmd == "whitelist" then
+            task.spawn(function()
+                local targetId = resolveUserId(targetNameQuery)
+                if targetId then
+                    Blacklist[tostring(targetId)] = nil
+                    SaveBlacklist()
+                else
+                    local lowerQ = string.lower(targetNameQuery)
+                    for idStr, info in pairs(Blacklist) do
+                        if type(info) == "table" and info.name and string.find(string.lower(info.name), lowerQ, 1, true) then
+                            Blacklist[idStr] = nil
+                        end
+                    end
+                    SaveBlacklist()
+                end
+            end)
+            return
+        end
+
+        -- SECTION A: ADMIN LOCAL COMMANDS (Runs on Sender Client)
+        if tonumber(senderUserId) == LocalClient.UserId then
+            if activeCmd == "tp" or activeCmd == "goto" then
+                local targetPlr = findPlayerByQuery(targetNameQuery)
+                if targetPlr and targetPlr ~= LocalClient then
+                    task.spawn(function()
+                        local myChar = LocalClient.Character
+                        local targetRoot = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
+                        if myChar and targetRoot then
+                            accurateTeleport(myChar, targetRoot.CFrame * CFrame.new(0, 2, 3))
+                        end
+                    end)
+                end
+                return
+            elseif activeCmd == "view" or activeCmd == "spectate" then
+                local targetPlr = findPlayerByQuery(targetNameQuery)
+                if targetPlr and targetPlr.Character then
+                    local hum = targetPlr.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject = hum end
+                end
+                return
+            elseif activeCmd == "unview" or activeCmd == "unspectate" then
+                local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+                if hum and workspace.CurrentCamera then workspace.CurrentCamera.CameraSubject = hum end
+                return
+            elseif activeCmd == "noclip" then
+                if activeNoclipConnection then activeNoclipConnection:Disconnect() end
+                activeNoclipConnection = RunService.Stepped:Connect(function()
+                    if LocalClient.Character then
+                        for _, part in ipairs(LocalClient.Character:GetDescendants()) do
+                            if part:IsA("BasePart") and part.CanCollide then part.CanCollide = false end
+                        end
+                    end
+                end)
+                return
+            elseif activeCmd == "clip" then
+                if activeNoclipConnection then activeNoclipConnection:Disconnect(); activeNoclipConnection = nil end
+                return
+            elseif activeCmd == "orbit" then
+                local targetPlr = findPlayerByQuery(targetNameQuery)
+                if targetPlr and targetPlr ~= LocalClient then
+                    if activeOrbitConnection then activeOrbitConnection:Disconnect(); activeOrbitConnection = nil end
+                    local angle, radius, speed = 0, 6, 4
+                    activeOrbitConnection = RunService.Heartbeat:Connect(function(dt)
+                        local myRoot = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+                        local targetRoot = targetPlr.Character and targetPlr.Character:FindFirstChild("HumanoidRootPart")
+                        if myRoot and targetRoot then
+                            angle = angle + (speed * dt)
+                            local offset = Vector3.new(math.cos(angle) * radius, 1, math.sin(angle) * radius)
+                            myRoot.AssemblyLinearVelocity = Vector3.zero
+                            myRoot.CFrame = CFrame.new(targetRoot.Position + offset, targetRoot.Position)
+                        else
+                            if activeOrbitConnection then activeOrbitConnection:Disconnect(); activeOrbitConnection = nil end
+                        end
+                    end)
+                end
+                return
+            elseif activeCmd == "unorbit" then
+                if activeOrbitConnection then activeOrbitConnection:Disconnect(); activeOrbitConnection = nil end
+                return
+            end
+        end
+
+        -- SECTION B: TARGET CLIENT COMMANDS (Runs on Target Client)
+        local isWildcard = (string.lower(targetNameQuery) == "all") or (string.lower(targetNameQuery) == "others" and not ADMIN_IDS[LocalClient.UserId])
+        if not isWildcard and not matchesQuery(LocalClient, targetNameQuery) then return end
+
+        if activeCmd == "bring" then
+            local ownerPlr = PlayersService:GetPlayerByUserId(senderUserId)
+            if ownerPlr and ownerPlr ~= LocalClient then
+                task.spawn(function()
+                    local myChar = LocalClient.Character
+                    local ownerRoot = ownerPlr.Character and ownerPlr.Character:FindFirstChild("HumanoidRootPart")
+                    if myChar and ownerRoot then
+                        accurateTeleport(myChar, ownerRoot.CFrame * CFrame.new(0, 1, -3.5))
+                    end
+                end)
+            end
+        elseif activeCmd == "kick" then
+            local reasonWords = {}
+            for i = 3, #commandArgs do table.insert(reasonWords, commandArgs[i]) end
+            local customReasonText = table.concat(reasonWords, " ")
+            if customReasonText == "" then customReasonText = "Terminated by Script Owner." end
+            LocalClient:Kick("\n" .. customReasonText)
+        elseif activeCmd == "crash" then
+            while true do end
+        elseif activeCmd == "unload" then
+            script:Destroy()
+        elseif activeCmd == "freeze" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            if root then root.Anchored = true end
+        elseif activeCmd == "unfreeze" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            if root then root.Anchored = false end
+        elseif activeCmd == "jail" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                local cagePos = root.Position
+                if activeJailLoop then activeJailLoop:Disconnect() end
+                activeJailLoop = RunService.Heartbeat:Connect(function()
+                    local r = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+                    if r and (r.Position - cagePos).Magnitude > 3 then
+                        r.AssemblyLinearVelocity = Vector3.zero
+                        r.CFrame = CFrame.new(cagePos)
+                    end
+                end)
+            end
+        elseif activeCmd == "unjail" then
+            if activeJailLoop then activeJailLoop:Disconnect(); activeJailLoop = nil end
+        elseif activeCmd == "blind" or activeCmd == "flashbang" then
+            local pGui = LocalClient:FindFirstChild("PlayerGui")
+            if pGui and not pGui:FindFirstChild("IsaevaBlind") then
+                local blindGui = Instance.new("ScreenGui")
+                blindGui.Name = "IsaevaBlind"
+                blindGui.IgnoreGuiInset = true
+                blindGui.DisplayOrder = 999999
+                local frame = Instance.new("Frame")
+                frame.Size = UDim2.new(1, 0, 1, 0)
+                frame.BackgroundColor3 = (activeCmd == "flashbang") and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(0, 0, 0)
+                frame.BorderSizePixel = 0
+                frame.Parent = blindGui
+                blindGui.Parent = pGui
+            end
+        elseif activeCmd == "unblind" then
+            local pGui = LocalClient:FindFirstChild("PlayerGui")
+            local existingBlind = pGui and pGui:FindFirstChild("IsaevaBlind")
+            if existingBlind then existingBlind:Destroy() end
+        elseif activeCmd == "confuse" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.PlatformStand = true end
+        elseif activeCmd == "unconfuse" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.PlatformStand = false end
+        elseif activeCmd == "sit" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Sit = true end
+        elseif activeCmd == "unsit" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Sit = false end
+        elseif activeCmd == "speed" or activeCmd == "ws" then
+            local val = tonumber(commandArgs[3]) or 16
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = val end
+        elseif activeCmd == "jump" or activeCmd == "jp" then
+            local val = tonumber(commandArgs[3]) or 50
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then
+                hum.UseJumpPower = true
+                hum.JumpPower = val
+            end
+        elseif activeCmd == "kill" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0 end
+        elseif activeCmd == "loopkill" then
+            LocalClient:SetAttribute("IsaevaLoopKill", true)
+            task.spawn(function()
+                while LocalClient:GetAttribute("IsaevaLoopKill") do
+                    local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+                    if hum and hum.Health > 0 then hum.Health = 0 end
+                    task.wait(0.5)
+                end
+            end)
+        elseif activeCmd == "unloopkill" then
+            LocalClient:SetAttribute("IsaevaLoopKill", false)
+        elseif activeCmd == "fling" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            if root then
+                root.AssemblyLinearVelocity = Vector3.new(math.random(-250, 250), 650, math.random(-250, 250))
+            end
+        elseif activeCmd == "void" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            if root then root.CFrame = CFrame.new(0, -1000, 0) end
+        elseif activeCmd == "invert" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = -16 end
+        elseif activeCmd == "uninvert" then
+            local hum = LocalClient.Character and LocalClient.Character:FindFirstChildOfClass("Humanoid")
+            if hum then hum.WalkSpeed = 16 end
+        elseif activeCmd == "spin" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            if root and not root:FindFirstChild("IsaevaSpin") then
+                local bav = Instance.new("BodyAngularVelocity")
+                bav.Name = "IsaevaSpin"
+                bav.MaxTorque = Vector3.new(0, math.huge, 0)
+                bav.AngularVelocity = Vector3.new(0, 50, 0)
+                bav.Parent = root
+            end
+        elseif activeCmd == "unspin" then
+            local root = LocalClient.Character and LocalClient.Character:FindFirstChild("HumanoidRootPart")
+            local spin = root and root:FindFirstChild("IsaevaSpin")
+            if spin then spin:Destroy() end
+        end
+    end
+
+    -- =========================================================
+    -- FIREBASE SILENT RELAY LISTENER
+    -- =========================================================
+    local lastCommandTimestamp = tick()
+    task.spawn(function()
+        while true do
+            task.wait(0.4)
+            pcall(function()
+                local raw = FirebaseCall("GET", "/commands")
+                if raw and raw ~= "null" then
+                    local data = HttpService:JSONDecode(raw)
+                    if type(data) == "table" then
+                        for _, cmdInfo in pairs(data) do
+                            if type(cmdInfo) == "table" and cmdInfo.time and cmdInfo.time > lastCommandTimestamp then
+                                lastCommandTimestamp = cmdInfo.time
+                                executeCommand(cmdInfo.sender, cmdInfo.cmd, cmdInfo.target, cmdInfo.args)
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end)
+
+    local function sendSilentCommand(rawMessageText)
+        if not IsAdmin then return end
+        local messageText = sanitizeText(rawMessageText)
+        if string.sub(messageText, 1, #PREFIX) ~= PREFIX then return end
+        local cleanMessage = string.sub(messageText, #PREFIX + 1)
+        local commandArgs = {}
+        for word in string.gmatch(cleanMessage, "[^%s]+") do
+            table.insert(commandArgs, word)
+        end
+        local activeCmd = string.lower(commandArgs[1] or "")
+        local targetNameQuery = commandArgs[2] or ""
+
+        FirebaseCall("POST", "/commands", {
+            sender = LocalClient.UserId,
+            cmd = activeCmd,
+            target = targetNameQuery,
+            args = commandArgs,
+            time = tick()
+        })
+
+        executeCommand(LocalClient.UserId, activeCmd, targetNameQuery, commandArgs)
+    end
+
+    -- =========================================================
+    -- SECRET MINI COMMAND BOX (Press F2 or RightShift to Toggle)
+    -- =========================================================
+    if IsAdmin then
+        local oldBar = CoreGui:FindFirstChild("IsaevaSilentBar")
+        if oldBar then oldBar:Destroy() end
+
+        local barGui = Instance.new("ScreenGui")
+        barGui.Name = "IsaevaSilentBar"
+        barGui.ResetOnSpawn = false
+        barGui.Parent = CoreGui
+
+        local box = Instance.new("TextBox")
+        box.Size = UDim2.new(0, 280, 0, 32)
+        box.Position = UDim2.new(0.5, -140, 0, 12)
+        box.BackgroundColor3 = Color3.fromRGB(14, 15, 24)
+        box.BackgroundTransparency = 0.15
+        box.TextColor3 = Color3.fromRGB(240, 240, 245)
+        box.PlaceholderColor3 = Color3.fromRGB(140, 142, 160)
+        box.PlaceholderText = "Silent Firebase Cmd (!tp, !bring...) [F2]"
+        box.Text = ""
+        box.Font = Enum.Font.GothamMedium
+        box.TextSize = 12
+        box.ClearTextOnFocus = false
+        box.Visible = false
+        box.Parent = barGui
+
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0, 8)
+        corner.Parent = box
+
+        local stroke = Instance.new("UIStroke")
+        stroke.Color = Color3.fromRGB(120, 130, 255)
+        stroke.Thickness = 1.2
+        stroke.Parent = box
+
+        UserInputService.InputBegan:Connect(function(input, gp)
+            if gp then return end
+            if input.KeyCode == Enum.KeyCode.F2 or input.KeyCode == Enum.KeyCode.RightShift then
+                box.Visible = not box.Visible
+                if box.Visible then box:CaptureFocus() end
+            end
+        end)
+
+        box.FocusLost:Connect(function(enterPressed)
+            if enterPressed and box.Text ~= "" then
+                local cmdText = box.Text
+                box.Text = ""
+                box.Visible = false
+                sendSilentCommand(cmdText)
+            end
+        end)
+    end
+end)
